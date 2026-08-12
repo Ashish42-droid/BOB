@@ -23,19 +23,20 @@ export const authenticateUser = async (req, res, next) => {
         return res.status(401).json({ error: 'Invalid or expired authentication token.' });
       }
       
-      // Fetch user profile
+      // Fetch matching staff profile by email (role source of truth)
       const { data: profile } = await supabaseAdmin
-        .from('profiles')
+        .from('staff_profiles')
         .select('*')
-        .eq('auth_user_id', user.id)
-        .single();
+        .eq('email', user.email)
+        .maybeSingle();
 
+      const roleMap = { clinic_assistant: 'CLINIC_ASSISTANT', doctor: 'DOCTOR', admin: 'ADMIN' };
       req.user = {
         id: profile?.id || user.id,
         auth_user_id: user.id,
         email: user.email,
-        role: profile?.role || 'CLINIC_ASSISTANT',
-        name: profile?.name || 'Clinic User'
+        role: roleMap[profile?.role] || 'CLINIC_ASSISTANT',
+        name: profile?.full_name || 'Clinic User'
       };
       return next();
     }

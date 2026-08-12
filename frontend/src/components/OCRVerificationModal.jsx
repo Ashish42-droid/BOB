@@ -3,9 +3,7 @@ import { FileText, CheckCircle2, Edit3, Save, AlertCircle } from 'lucide-react';
 import api from '../services/api';
 
 export default function OCRVerificationModal({ documentId, initialData, rawText, onVerified, onClose }) {
-  const [medications, setMedications] = useState(initialData?.medications || [
-    { name: 'Paracetamol', strength: '500 mg', frequency: 'Twice daily', duration: '3 days', instructions: 'After meals' }
-  ]);
+  const [medications, setMedications] = useState(initialData?.medications || []);
   const [docNotes, setDocNotes] = useState(initialData?.diagnosis_notes || '');
   const [editingIndex, setEditingIndex] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -19,7 +17,7 @@ export default function OCRVerificationModal({ documentId, initialData, rawText,
   const handleAddMedication = () => {
     setMedications([
       ...medications,
-      { name: 'New Medicine', strength: '500 mg', frequency: 'Twice daily', duration: '5 days', instructions: 'After food' }
+      { name: '', strength: '', frequency: '', duration: '', instructions: '' }
     ]);
   };
 

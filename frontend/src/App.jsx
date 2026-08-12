@@ -7,6 +7,7 @@ import CursorGradient from './components/CursorGradient';
 
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 
 import AssistantDashboard from './pages/AssistantDashboard';
 import PatientRegistrationPage from './pages/PatientRegistrationPage';
@@ -38,6 +39,7 @@ export default function App() {
             {/* Public Routes */}
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
 
             {/* Clinic Assistant Routes */}
             <Route

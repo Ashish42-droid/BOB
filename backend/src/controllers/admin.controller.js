@@ -1,34 +1,32 @@
 import { supabaseAdmin } from '../config/supabase.js';
-import { qdrantClient } from '../config/qdrant.js';
-import { COLLECTION_NAME } from '../services/ragEngine.js';
 import { logAuditEvent } from '../middleware/audit.middleware.js';
 
-// Default list of 5 Qualified Doctors for India-level Telemedicine Platform
-const DEMO_DOCTORS = [
-  { id: 'dr_1', name: 'Dr. Rajesh Verma', email: 'doctor@clinic.org', role: 'DOCTOR', phone: '+91 9876500002', qualifications: 'MBBS, MD (General Medicine) — AIIMS New Delhi', status: 'ACTIVE' },
-  { id: 'dr_2', name: 'Dr. Priya Nair', email: 'dr.priya@clinic.org', role: 'DOCTOR', phone: '+91 9876500004', qualifications: 'MBBS, MS (Pediatrics & Child Health) — JIPMER Puducherry', status: 'ACTIVE' },
-  { id: 'dr_3', name: 'Dr. Arfan Ahmed', email: 'dr.arfan@clinic.org', role: 'DOCTOR', phone: '+91 9876500005', qualifications: 'MBBS, MD (Emergency Medicine & Critical Care) — PGIMER Chandigarh', status: 'ACTIVE' },
-  { id: 'dr_4', name: 'Dr. Sunita Kulkarni', email: 'dr.sunita@clinic.org', role: 'DOCTOR', phone: '+91 9876500006', qualifications: 'MBBS, DNB (Community Medicine & Telemedicine) — KEM Mumbai', status: 'ACTIVE' },
-  { id: 'dr_5', name: 'Dr. Vikramaditya Singh', email: 'dr.vikram@clinic.org', role: 'DOCTOR', phone: '+91 9876500007', qualifications: 'MBBS, MD (Pulmonology & Internal Medicine) — BHU Varanasi', status: 'ACTIVE' }
-];
+const ROLE_DB_TO_API = { clinic_assistant: 'CLINIC_ASSISTANT', doctor: 'DOCTOR', admin: 'ADMIN' };
+const ROLE_API_TO_DB = { CLINIC_ASSISTANT: 'clinic_assistant', DOCTOR: 'doctor', ADMIN: 'admin' };
 
 export const getUsers = async (req, res) => {
   try {
-    let users = [];
-    try {
-      const { data } = await supabaseAdmin.from('profiles').select('*').order('created_at', { ascending: false });
-      if (data && data.length > 0) users = data;
-    } catch (e) {}
+    const { data, error } = await supabaseAdmin
+      .from('staff_profiles')
+      .select('*, doctor_profiles(registration_number, specialization, qualification)')
+      .order('created_at', { ascending: false });
 
-    if (!users || users.length === 0) {
-      users = [
-        { id: 'p1', name: 'Sunita Devi (Assistant)', email: 'assistant@clinic.org', role: 'CLINIC_ASSISTANT', status: 'ACTIVE' },
-        ...DEMO_DOCTORS,
-        { id: 'p3', name: 'Dr. Ananya Sen (Admin Director)', email: 'admin@clinic.org', role: 'ADMIN', status: 'ACTIVE' }
-      ];
+    if (error) {
+      return res.status(500).json({ error: 'Failed to load staff accounts', details: error.message });
     }
 
-    return res.json(users);
+    return res.json((data || []).map((u) => ({
+      id: u.id,
+      name: u.full_name,
+      email: u.email,
+      phone: u.phone,
+      role: ROLE_DB_TO_API[u.role] || u.role,
+      status: (u.status || 'active').toUpperCase(),
+      qualifications: u.doctor_profiles?.qualification || null,
+      specialization: u.doctor_profiles?.specialization || null,
+      registration_number: u.doctor_profiles?.registration_number || null,
+      created_at: u.created_at
+    })));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -36,31 +34,56 @@ export const getUsers = async (req, res) => {
 
 export const createUser = async (req, res) => {
   try {
-    const { email, name, role, phone } = req.body;
+    const { email, name, role, phone, password, registration_number, specialization, qualification } = req.body;
     if (!email || !name || !role) {
       return res.status(400).json({ error: 'email, name, and role are required' });
     }
+    const dbRole = ROLE_API_TO_DB[role];
+    if (!dbRole) {
+      return res.status(400).json({ error: `Invalid role '${role}'.` });
+    }
 
-    let newUser = { id: `usr_${Date.now()}`, email, name, role, phone, status: 'ACTIVE' };
-    try {
-      const { data } = await supabaseAdmin
-        .from('profiles')
-        .insert([{ email, name, role, phone, status: 'ACTIVE' }])
-        .select()
-        .single();
-      if (data) newUser = data;
-    } catch (e) {}
+    // Auth account (default password must be changed by the user)
+    const { error: authErr } = await supabaseAdmin.auth.admin.createUser({
+      email: email.toLowerCase().trim(),
+      password: password || 'ChangeMe@123',
+      email_confirm: true,
+      user_metadata: { full_name: name, role: dbRole }
+    });
+    if (authErr && !/already.*(registered|exists)/i.test(authErr.message)) {
+      return res.status(400).json({ error: `Auth account creation failed: ${authErr.message}` });
+    }
+
+    const { data: newUser, error } = await supabaseAdmin
+      .from('staff_profiles')
+      .insert([{ email: email.toLowerCase().trim(), full_name: name, role: dbRole, phone: phone || null, status: 'active' }])
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(500).json({ error: 'Staff profile creation failed', details: error.message });
+    }
+
+    if (dbRole === 'doctor') {
+      const { error: docErr } = await supabaseAdmin.from('doctor_profiles').insert([{
+        staff_id: newUser.id,
+        registration_number: registration_number || `PENDING-${Date.now()}`,
+        specialization: specialization || 'General Medicine',
+        qualification: qualification || null
+      }]);
+      if (docErr) console.warn('doctor_profiles insert warning:', docErr.message);
+    }
 
     logAuditEvent({
       actorId: req.user?.id,
       actorRole: req.user?.role,
       action: 'ADMIN_CREATED_USER',
-      entityType: 'PROFILES',
+      entityType: 'STAFF_PROFILES',
       entityId: newUser.id,
       metadata: { email, role }
     });
 
-    return res.status(201).json(newUser);
+    return res.status(201).json({ ...newUser, name: newUser.full_name, role: ROLE_DB_TO_API[newUser.role] });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -68,24 +91,27 @@ export const createUser = async (req, res) => {
 
 export const getProtocols = async (req, res) => {
   try {
-    let protocols = [];
-    try {
-      const { data } = await supabaseAdmin
-        .from('protocols')
-        .select('*, knowledge_sources(*)')
-        .order('created_at', { ascending: false });
-      if (data) protocols = data;
-    } catch (e) {}
+    const { data, error } = await supabaseAdmin
+      .from('clinical_protocols')
+      .select('*, clinical_protocol_steps(step_number, instruction)')
+      .order('created_at', { ascending: false });
 
-    if (!protocols || protocols.length === 0) {
-      protocols = [
-        { id: 'pr1', name: 'Minor Superficial Wound & Abrasion First-Aid Protocol', category: 'First Aid', version: '1.0', risk_level: 'LOW', content: 'Irrigate wound with clean water/sterile saline, apply povidone-iodine antiseptic, apply sterile dressing.', status: 'ACTIVE' },
-        { id: 'pr2', name: 'Acute Febrile Illness Triage Protocol', category: 'General Medicine', version: '1.0', risk_level: 'MODERATE', content: 'Measure temp & SpO2, provide ORS fluids, cold sponging if temp > 101F, monitor for warning signs.', status: 'ACTIVE' },
-        { id: 'pr3', name: 'Emergency Triage Red-Flag Protocol', category: 'Emergency', version: '1.0', risk_level: 'EMERGENCY', content: 'SpO2 < 90%, Systolic BP < 90 or > 180, chest pain -> Immediate doctor alert + hospital referral.', status: 'ACTIVE' }
-      ];
+    if (error) {
+      return res.status(500).json({ error: 'Failed to load clinical protocols', details: error.message });
     }
 
-    return res.json(protocols);
+    return res.json((data || []).map((p) => ({
+      id: p.id,
+      protocol_code: p.protocol_code,
+      name: p.title,
+      category: p.category,
+      version: p.version,
+      content: p.description,
+      steps: (p.clinical_protocol_steps || []).sort((a, b) => a.step_number - b.step_number).map((s) => s.instruction),
+      source: `${p.source_organization} — ${p.source_document}`,
+      status: p.is_active ? 'ACTIVE' : 'INACTIVE',
+      created_at: p.created_at
+    })));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -93,58 +119,42 @@ export const getProtocols = async (req, res) => {
 
 export const createProtocol = async (req, res) => {
   try {
-    const { name, category, risk_level = 'LOW', content, source_organization = 'MoHFW' } = req.body;
+    const { name, category, content, steps = [], source_organization = 'Ministry of Health & Family Welfare, Govt of India' } = req.body;
     if (!name || !content) {
       return res.status(400).json({ error: 'name and content are required' });
     }
 
-    let newProtocol = { id: `pr_${Date.now()}`, name, category, version: '1.0', risk_level, content, status: 'ACTIVE' };
-    try {
-      const { data } = await supabaseAdmin.from('protocols').insert([{
-        name,
+    const { data: newProtocol, error } = await supabaseAdmin
+      .from('clinical_protocols')
+      .insert([{
+        protocol_code: `CUSTOM-${Date.now()}`,
+        title: name,
         category: category || 'General Medicine',
+        description: content,
+        source_organization,
+        source_document: 'Admin-entered protocol',
         version: '1.0',
-        risk_level,
-        content,
-        status: 'ACTIVE',
-        approved_by: req.user?.id || null
-      }]).select().single();
-      if (data) newProtocol = data;
-    } catch (e) {}
+        is_active: true
+      }])
+      .select()
+      .single();
 
-    // Ingest into Qdrant vector DB with metadata approved = true
-    if (qdrantClient) {
-      try {
-        const queryVector = new Array(384).fill(0.1);
-        await qdrantClient.upsert(COLLECTION_NAME, {
-          wait: true,
-          points: [
-            {
-              id: Date.now(),
-              vector: queryVector,
-              payload: {
-                title: name,
-                category,
-                source: source_organization,
-                version: '1.0',
-                content,
-                approved: true,
-                effective_date: new Date().toISOString()
-              }
-            }
-          ]
-        });
-        console.log('✅ Ingested protocol to Qdrant vector DB with metadata approved = true');
-      } catch (qErr) {
-        console.warn('Qdrant ingestion warning:', qErr.message);
-      }
+    if (error) {
+      return res.status(500).json({ error: 'Protocol creation failed', details: error.message });
+    }
+
+    if (Array.isArray(steps) && steps.length > 0) {
+      const { error: stepErr } = await supabaseAdmin.from('clinical_protocol_steps').insert(
+        steps.map((instruction, i) => ({ protocol_id: newProtocol.id, step_number: i + 1, instruction }))
+      );
+      if (stepErr) console.warn('protocol steps insert warning:', stepErr.message);
     }
 
     logAuditEvent({
       actorId: req.user?.id,
       actorRole: req.user?.role,
       action: 'ADMIN_CREATED_PROTOCOL',
-      entityType: 'PROTOCOLS',
+      entityType: 'CLINICAL_PROTOCOLS',
       entityId: newProtocol.id
     });
 
@@ -156,26 +166,20 @@ export const createProtocol = async (req, res) => {
 
 export const getAuditLogs = async (req, res) => {
   try {
-    let logs = [];
-    try {
-      const { data } = await supabaseAdmin
-        .from('audit_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(100);
-      if (data) logs = data;
-    } catch (e) {}
+    const { data, error } = await supabaseAdmin
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
 
-    if (!logs || logs.length === 0) {
-      logs = [
-        { created_at: new Date().toISOString(), actor_role: 'CLINIC_ASSISTANT', action: 'PATIENT_CREATED', entity_type: 'PATIENTS' },
-        { created_at: new Date(Date.now() - 3600000).toISOString(), actor_role: 'CLINIC_ASSISTANT', action: 'OCR_VERIFIED', entity_type: 'DOCUMENT_EXTRACTIONS' },
-        { created_at: new Date(Date.now() - 7200000).toISOString(), actor_role: 'CLINIC_ASSISTANT', action: 'AI_ASSESSMENT_GENERATED', entity_type: 'AI_ASSESSMENTS' },
-        { created_at: new Date(Date.now() - 10800000).toISOString(), actor_role: 'DOCTOR', action: 'DOCTOR_DECISION_FINALIZED', entity_type: 'DOCTOR_REVIEWS' }
-      ];
+    if (error) {
+      return res.status(500).json({ error: 'Failed to load audit logs', details: error.message });
     }
 
-    return res.json(logs);
+    return res.json((data || []).map((l) => ({
+      ...l,
+      actor_role: l.new_data?.actor_role || 'SYSTEM'
+    })));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -183,42 +187,50 @@ export const getAuditLogs = async (req, res) => {
 
 export const getAnalytics = async (req, res) => {
   try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const [patients, visitsToday, waiting, highRisk, completed, consultationsDone, doctors] = await Promise.all([
+      supabaseAdmin.from('patients').select('*', { count: 'exact', head: true }),
+      supabaseAdmin.from('visits').select('*', { count: 'exact', head: true }).gte('created_at', todayStart.toISOString()),
+      supabaseAdmin.from('visits').select('*', { count: 'exact', head: true }).eq('status', 'awaiting_doctor'),
+      supabaseAdmin.from('visits').select('*', { count: 'exact', head: true }).eq('risk_level', 'high').neq('status', 'completed'),
+      supabaseAdmin.from('visits').select('*', { count: 'exact', head: true }).eq('status', 'completed'),
+      supabaseAdmin.from('consultations').select('*', { count: 'exact', head: true }).eq('status', 'completed'),
+      supabaseAdmin.from('staff_profiles').select('full_name, email, phone, status, doctor_profiles!inner(specialization, qualification)').eq('role', 'doctor')
+    ]);
+
+    const [lowCount, medCount, highCount] = await Promise.all([
+      supabaseAdmin.from('visits').select('*', { count: 'exact', head: true }).eq('risk_level', 'low'),
+      supabaseAdmin.from('visits').select('*', { count: 'exact', head: true }).eq('risk_level', 'medium'),
+      supabaseAdmin.from('visits').select('*', { count: 'exact', head: true }).eq('risk_level', 'high')
+    ]);
+
+    const total = (lowCount.count || 0) + (medCount.count || 0) + (highCount.count || 0);
+    const pct = (n) => (total > 0 ? Math.round(((n || 0) / total) * 100) : 0);
+
     return res.json({
-      india_level_metrics: {
-        connected_village_clinics: 142,
-        states_covered: 12,
-        districts_covered: 38,
-        total_patients_served: 4820,
-        completed_teleconsultations: 3410,
-        avg_doctor_response_time_mins: 4.2
-      },
-      state_breakdown: [
-        { state: 'Uttar Pradesh', clinics: 34, patients: 1240, urgent_referrals: 12 },
-        { state: 'Bihar', clinics: 28, patients: 980, urgent_referrals: 9 },
-        { state: 'Madhya Pradesh', clinics: 22, patients: 750, urgent_referrals: 7 },
-        { state: 'West Bengal', clinics: 18, patients: 620, urgent_referrals: 5 },
-        { state: 'Rajasthan', clinics: 14, patients: 450, urgent_referrals: 4 },
-        { state: 'Odisha', clinics: 12, patients: 380, urgent_referrals: 3 },
-        { state: 'Other States', clinics: 14, patients: 400, urgent_referrals: 4 }
-      ],
+      total_patients: patients.count || 0,
+      today_patients: visitsToday.count || 0,
+      waiting_for_doctor: waiting.count || 0,
+      high_risk_cases: highRisk.count || 0,
+      completed_visits: completed.count || 0,
+      completed_consultations: consultationsDone.count || 0,
       risk_distribution: {
-        LOW: { percentage: 65, count: 3133, label: 'Low Risk / First-Aid Protocol' },
-        MODERATE: { percentage: 22, count: 1060, label: 'Moderate / Doctor Review' },
-        HIGH: { percentage: 10, count: 482, label: 'High Risk / Priority Queue' },
-        EMERGENCY: { percentage: 3, count: 145, label: 'Emergency Red Alert Referral' }
+        LOW: { count: lowCount.count || 0, percentage: pct(lowCount.count), label: 'Low risk — protocol first-aid care' },
+        MEDIUM: { count: medCount.count || 0, percentage: pct(medCount.count), label: 'Medium risk — doctor review required' },
+        HIGH: { count: highCount.count || 0, percentage: pct(highCount.count), label: 'High risk — urgent doctor / referral' }
       },
-      active_doctors: DEMO_DOCTORS,
-      today_patients: 4,
-      waiting_for_doctor: 2,
-      high_risk_cases: 1,
-      completed_consultations: 2
+      active_doctors: (doctors.data || []).map((d) => ({
+        name: d.full_name,
+        email: d.email,
+        phone: d.phone,
+        status: (d.status || 'active').toUpperCase(),
+        specialization: d.doctor_profiles?.specialization,
+        qualifications: d.doctor_profiles?.qualification
+      }))
     });
   } catch (error) {
-    return res.json({
-      today_patients: 4,
-      waiting_for_doctor: 2,
-      high_risk_cases: 1,
-      completed_consultations: 2
-    });
+    return res.status(500).json({ error: 'Failed to compute analytics', details: error.message });
   }
 };

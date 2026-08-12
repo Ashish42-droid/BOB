@@ -12,13 +12,20 @@ import {
   Bell,
   Search,
   ChevronRight,
-  Plus
+  Plus,
+  Menu
 } from 'lucide-react';
 
 export default function SidebarLayout({ children }) {
   const { user, logoutUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+
+  // Close the mobile drawer on navigation
+  React.useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
 
   const handleLogout = async () => {
     await logoutUser();
@@ -55,18 +62,23 @@ export default function SidebarLayout({ children }) {
       { label: 'Register New Patient', path: '/assistant/patients/new', icon: <Plus className="w-4 h-4" /> }
     ] : []),
     ...(user?.role === 'DOCTOR' ? [
-      { label: 'Doctor Teleconsult Desk', path: '/doctor/queue', icon: <Stethoscope className="w-4 h-4" /> }
+      { label: 'Doctor Review Queue', path: '/doctor/queue', icon: <Stethoscope className="w-4 h-4" /> }
     ] : []),
     ...(user?.role === 'ADMIN' ? [
-      { label: 'India Admin Analytics', path: '/admin/dashboard', icon: <Activity className="w-4 h-4" /> }
+      { label: 'Admin Dashboard', path: '/admin/dashboard', icon: <Activity className="w-4 h-4" /> }
     ] : [])
   ];
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900">
       
-      {/* LEFT FIXED SIDEBAR */}
-      <aside className="w-64 shrink-0 bg-white border-r border-slate-200 flex flex-col justify-between fixed inset-y-0 left-0 z-40 shadow-sm">
+      {/* Mobile drawer backdrop */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-40 bg-slate-900/40 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
+      )}
+
+      {/* LEFT SIDEBAR — fixed on desktop, slide-in drawer on mobile */}
+      <aside className={`w-64 shrink-0 bg-white border-r border-slate-200 flex flex-col justify-between fixed inset-y-0 left-0 z-50 shadow-sm transition-transform duration-200 lg:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         
         <div className="p-5 space-y-6">
           {/* Brand Logo Header */}
@@ -137,16 +149,23 @@ export default function SidebarLayout({ children }) {
       </aside>
 
       {/* SPACIOUS DASHBOARD CONTENT AREA */}
-      <div className="flex-1 pl-64 flex flex-col min-h-screen">
-        
+      <div className="flex-1 lg:pl-64 flex flex-col min-h-screen">
+
         {/* Top Navbar Header */}
-        <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-8 py-3.5 flex items-center justify-between shadow-sm">
+        <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-4 lg:px-8 py-3.5 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="lg:hidden p-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
+              aria-label="Open navigation menu"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
             <div className="text-sm font-bold text-slate-900 tracking-tight">
-              Modern Healthcare SaaS Platform
+              Virtual Village Clinic
             </div>
             <span className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Systems Active (142 Tele-Clinics Online)
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> System Online
             </span>
           </div>
 
@@ -168,12 +187,12 @@ export default function SidebarLayout({ children }) {
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 p-8 max-w-7xl w-full mx-auto space-y-6">
+        <main className="flex-1 p-4 lg:p-8 max-w-7xl w-full mx-auto space-y-6">
           {children}
         </main>
 
         {/* Minimalist Footer */}
-        <footer className="border-t border-slate-200 px-8 py-4 text-xs text-slate-500 flex items-center justify-between bg-white">
+        <footer className="border-t border-slate-200 px-4 lg:px-8 py-4 text-xs text-slate-500 flex flex-col sm:flex-row gap-2 items-center justify-between bg-white">
           <div>Virtual Village Clinic Platform &copy; 2026 — AI prepares the case. The doctor makes the decision.</div>
           <div className="font-mono text-[11px] text-slate-400">MoHFW STG Protocol Engine Active</div>
         </footer>

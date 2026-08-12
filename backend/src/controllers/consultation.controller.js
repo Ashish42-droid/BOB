@@ -1,86 +1,106 @@
-import { config } from '../config/env.js';
 import { supabaseAdmin } from '../config/supabase.js';
 import { logAuditEvent } from '../middleware/audit.middleware.js';
 
-// Real-Time In-Memory Persistence Store for Scheduled Video Teleconsultations (Starts Clean)
-let MEMORY_CONSULTATIONS = [];
+/**
+ * Teleconsultation lifecycle controller.
+ *
+ * Persistence model (live schema):
+ *  - appointments   : the scheduled slot (appointment_code, doctor, risk, reason)
+ *  - consultations  : the video-call session (status: waiting|active|completed|cancelled,
+ *                     meeting_room_id, started_at, ended_at)
+ * Rich display fields (patient name/code, doctor name, risk) are joined from
+ * visits/patients at read time. A small in-memory overlay carries transient
+ * call state (e.g. incoming-call ring) that has no schema column.
+ */
 
-// Push Complete Case Context (AI Summary + Injury Photo + Prescription OCR) to Doctor Portal
-// DOES NOT auto-launch or ring any video call (visual/case file data push only)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const asUuid = (v) => (typeof v === 'string' && UUID_RE.test(v) ? v : null);
+
+// Transient overlay: consultationId -> { ringing, scheduled_time, doctor_name, ... }
+const CALL_OVERLAY = new Map();
+
+async function getDefaultDoctor() {
+  const { data } = await supabaseAdmin
+    .from('doctor_profiles')
+    .select('staff_id, specialization, staff_profiles(full_name)')
+    .limit(1)
+    .maybeSingle();
+  return data
+    ? { id: data.staff_id, name: data.staff_profiles?.full_name || 'Doctor', specialization: data.specialization }
+    : null;
+}
+
+async function createConsultationRecord({ visitId, appointmentId = null, roomId }) {
+  const { data, error } = await supabaseAdmin
+    .from('consultations')
+    .insert([{
+      visit_id: asUuid(visitId),
+      appointment_id: appointmentId,
+      consultation_type: 'video',
+      status: 'waiting',
+      meeting_room_id: roomId
+    }])
+    .select()
+    .single();
+  if (error) {
+    console.error('consultations insert FAILED:', error.message);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * POST /api/consultations/push-case
+ * Sends the completed AI case file to the doctor queue and opens a waiting
+ * video room. The AI summary itself is already persisted in ai_assessments.
+ */
 export const pushToDoctor = async (req, res) => {
   try {
-    const {
-      patient_id,
-      patient_name,
-      patient_code,
-      visit_id,
-      doctor_name,
-      ai_assessment,
-      vision_observation,
-      verified_ocr_data,
-      vitals,
-      symptoms,
-      village
-    } = req.body;
+    const { patient_id, patient_name, patient_code, visit_id, doctor_name, ai_assessment } = req.body;
 
-    if (!patient_id) {
-      return res.status(400).json({ error: 'patient_id is required' });
+    if (!patient_id || !visit_id) {
+      return res.status(400).json({ error: 'patient_id and visit_id are required' });
     }
 
-    const cleanCode = (patient_code || 'PAT-2026-9000').replace(/[^a-zA-Z0-9]/g, '_');
+    const cleanCode = (patient_code || 'PAT').replace(/[^a-zA-Z0-9]/g, '_');
     const roomId = `room_${cleanCode}_${Date.now()}`;
 
-    const newPushRecord = {
-      id: `c_${Date.now()}`,
-      visit_id: visit_id || `v_${Date.now()}`,
-      patient_id,
-      patient_name: patient_name || 'Patient',
-      patient_code: patient_code || 'PAT-RECORD',
-      village: village || 'Primary Health Centre',
-      doctor_name: doctor_name || 'Dr. Rajesh Sharma (AIIMS New Delhi)',
-      risk_level: (ai_assessment?.risk_level || 'MODERATE').toUpperCase(),
-      scheduled_time: new Date().toISOString(),
-      mode: 'VIDEO',
-      status: 'CASE_PUSHED', // Case file pushed for doctor review (NOT ringable)
-      room_id: roomId,
-      reason: ai_assessment?.patient_summary || 'AI Case Assessment Review',
-      ai_summary: ai_assessment,
-      vision_observation,
-      verified_ocr_data,
-      vitals,
-      symptoms,
-      created_at: new Date().toISOString()
-    };
+    const consultation = await createConsultationRecord({ visitId: visit_id, roomId });
 
-    // Insert to Supabase DB consultations table
-    try {
-      await supabaseAdmin.from('consultations').insert([{
-        visit_id: newPushRecord.visit_id,
-        mode: 'VIDEO',
-        status: 'CASE_PUSHED',
-        meeting_room_id: roomId
-      }]);
-    } catch (e) {
-      console.warn('Supabase DB consultation insert warning:', e.message);
+    // Ensure the visit is flagged for the doctor queue
+    const { error: visitErr } = await supabaseAdmin
+      .from('visits')
+      .update({ status: 'awaiting_doctor' })
+      .eq('id', visit_id);
+    if (visitErr) console.warn('visits status update failed:', visitErr.message);
+
+    if (consultation) {
+      CALL_OVERLAY.set(consultation.id, {
+        patient_name: patient_name || 'Patient',
+        patient_code: patient_code || 'PAT-RECORD',
+        doctor_name: doctor_name || 'On-call Doctor',
+        risk_level: (ai_assessment?.risk_level || 'MEDIUM').toUpperCase(),
+        reason: ai_assessment?.patient_summary?.slice(0, 200) || 'AI case assessment review',
+        ringing: false
+      });
     }
 
-    MEMORY_CONSULTATIONS.unshift(newPushRecord);
-
     await logAuditEvent({
-      actorId: req.user?.id || 'assistant_001',
-      actorRole: req.user?.role || 'CLINIC_ASSISTANT',
+      actorId: req.user?.id,
+      actorRole: req.user?.role,
       action: 'CASE_PUSHED_TO_DOCTOR',
       entityType: 'CONSULTATIONS',
-      entityId: newPushRecord.id,
-      metadata: { patient_id, doctor_name: newPushRecord.doctor_name, risk_level: newPushRecord.risk_level }
+      entityId: consultation?.id,
+      metadata: { patient_id, visit_id, risk_level: ai_assessment?.risk_level }
     });
 
-    console.log(`📌 CASE PUSHED TO DOCTOR PORTAL DB! Patient: ${newPushRecord.patient_name} (${newPushRecord.patient_code}) & Doctor: ${newPushRecord.doctor_name}`);
-
     return res.status(201).json({
-      message: 'Case file pushed to Doctor database successfully!',
-      consultation: newPushRecord,
-      room_id: roomId
+      message: 'Case file sent to the doctor queue.',
+      consultation: consultation
+        ? { ...consultation, ...CALL_OVERLAY.get(consultation.id) }
+        : { visit_id, room_id: roomId, persisted: false },
+      room_id: roomId,
+      persisted: Boolean(consultation)
     });
   } catch (error) {
     console.error('Error pushing case to doctor:', error.message);
@@ -88,56 +108,48 @@ export const pushToDoctor = async (req, res) => {
   }
 };
 
-// Emergency Call Ringtone Trigger
+/**
+ * POST /api/consultations/ring  — request an immediate emergency video call.
+ */
 export const ringCall = async (req, res) => {
   try {
-    const {
-      patient_id,
-      patient_name,
-      patient_code,
-      visit_id,
-      village,
-      risk_level,
-      reason,
-      room_id
-    } = req.body;
+    const { patient_id, patient_name, patient_code, visit_id, risk_level, reason, room_id } = req.body;
 
     const roomId = room_id || `room_${(patient_code || 'PAT').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
+    const consultation = await createConsultationRecord({ visitId: visit_id, roomId });
 
-    const newCall = {
-      id: `c_${Date.now()}`,
-      visit_id: visit_id || `v_${Date.now()}`,
-      patient_id,
-      patient_name: patient_name || 'Patient',
-      patient_code: patient_code || 'PAT-RECORD',
-      village: village || 'Primary Health Centre',
-      risk_level: (risk_level || 'HIGH').toUpperCase(),
-      scheduled_time: new Date().toISOString(),
-      mode: 'VIDEO',
-      status: 'CALL_RINGTONE_ACTIVE',
-      room_id: roomId,
-      reason: reason || 'Emergency Teleconsultation Request',
-      created_at: new Date().toISOString()
-    };
+    if (consultation) {
+      CALL_OVERLAY.set(consultation.id, {
+        patient_name: patient_name || 'Patient',
+        patient_code: patient_code || 'PAT-RECORD',
+        risk_level: (risk_level || 'HIGH').toUpperCase(),
+        reason: reason || 'Emergency teleconsultation request',
+        ringing: true
+      });
+    }
 
-    MEMORY_CONSULTATIONS.unshift(newCall);
+    await logAuditEvent({
+      actorId: req.user?.id,
+      actorRole: req.user?.role,
+      action: 'EMERGENCY_CALL_REQUESTED',
+      entityType: 'CONSULTATIONS',
+      entityId: consultation?.id,
+      metadata: { patient_id, visit_id, risk_level }
+    });
 
-    try {
-      await supabaseAdmin.from('consultations').insert([{
-        visit_id: newCall.visit_id,
-        mode: 'VIDEO',
-        status: 'CALL_RINGTONE_ACTIVE',
-        meeting_room_id: roomId
-      }]);
-    } catch (e) {}
-
-    return res.status(201).json({ message: 'Emergency call ringtone activated for doctor', consultation: newCall, room_id: roomId });
+    return res.status(201).json({
+      message: 'Emergency video-call request sent to the doctor.',
+      consultation: consultation ? { ...consultation, ...CALL_OVERLAY.get(consultation.id) } : { room_id: roomId },
+      room_id: roomId
+    });
   } catch (error) {
-    return res.status(500).json({ error: 'Failed to trigger ringtone call', details: error.message });
+    return res.status(500).json({ error: 'Failed to request emergency call', details: error.message });
   }
 };
 
-// Explicitly Schedule a Video Teleconsultation Appointment
+/**
+ * POST /api/consultations/schedule — book an appointment + waiting video room.
+ */
 export const scheduleConsultation = async (req, res) => {
   try {
     const {
@@ -148,186 +160,219 @@ export const scheduleConsultation = async (req, res) => {
       doctor_id,
       doctor_name,
       scheduled_time,
-      risk_level = 'MODERATE',
-      reason = 'Teleconsultation Review'
+      risk_level = 'MEDIUM',
+      reason = 'Teleconsultation review'
     } = req.body;
 
     if (!patient_id) {
       return res.status(400).json({ error: 'patient_id is required' });
     }
 
-    const roomId = `room_${(patient_code || patient_id).replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
-    const newConsultation = {
-      id: `c_${Date.now()}`,
-      visit_id: visit_id || `v_${Date.now()}`,
-      patient_id,
-      patient_name: patient_name || 'Patient',
-      patient_code: patient_code || `PAT-RECORD`,
-      doctor_id: doctor_id || 'd_aiims_001',
-      doctor_name: doctor_name || 'Dr. Rajesh Sharma (AIIMS New Delhi)',
-      risk_level: risk_level.toUpperCase(),
-      scheduled_time: scheduled_time || new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      mode: 'VIDEO',
-      status: 'SCHEDULED', // Call is scheduled, only joinable via explicit click
-      room_id: roomId,
-      reason,
-      created_at: new Date().toISOString()
-    };
+    const roomId = `room_${(patient_code || 'PAT').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
+    const defaultDoctor = await getDefaultDoctor();
+    const doctorId = asUuid(doctor_id) || defaultDoctor?.id || null;
+    const when = scheduled_time || new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-    try {
-      await supabaseAdmin.from('consultations').insert([{
-        visit_id: newConsultation.visit_id,
-        doctor_id: newConsultation.doctor_id,
-        mode: 'VIDEO',
-        status: 'SCHEDULED',
-        meeting_room_id: roomId
-      }]);
-    } catch (e) {
-      console.warn('Supabase DB consultation insert warning:', e.message);
+    // 1. Appointment (the scheduled slot)
+    let appointment = null;
+    if (asUuid(patient_id) && asUuid(visit_id) && doctorId) {
+      const riskEnum = { HIGH: 'high', MEDIUM: 'medium', LOW: 'low' }[String(risk_level).toUpperCase()] || 'medium';
+      const { data, error } = await supabaseAdmin
+        .from('appointments')
+        .insert([{
+          appointment_code: `APT-${Date.now()}`,
+          patient_id,
+          visit_id,
+          doctor_id: doctorId,
+          risk_level: riskEnum,
+          status: 'scheduled',
+          reason: `${reason} | Scheduled for: ${when}`,
+          booked_by: asUuid(req.user?.id)
+        }])
+        .select()
+        .single();
+      if (error) console.warn('appointments insert failed:', error.message);
+      else appointment = data;
     }
 
-    MEMORY_CONSULTATIONS.unshift(newConsultation);
-
-    await logAuditEvent({
-      actorId: req.user?.id || 'assistant_001',
-      actorRole: req.user?.role || 'CLINIC_ASSISTANT',
-      action: 'CONSULTATION_SCHEDULED',
-      entityType: 'CONSULTATIONS',
-      entityId: newConsultation.id,
-      metadata: { patient_id, scheduled_time: newConsultation.scheduled_time, risk_level }
+    // 2. Consultation (the video room, waiting until joined)
+    const consultation = await createConsultationRecord({
+      visitId: visit_id,
+      appointmentId: appointment?.id || null,
+      roomId
     });
 
-    console.log(`📅 Consultation Scheduled! Room: ${roomId} for Patient: ${newConsultation.patient_name}`);
+    if (asUuid(visit_id)) {
+      await supabaseAdmin.from('visits').update({ status: 'consultation_scheduled' }).eq('id', visit_id);
+    }
+
+    if (consultation) {
+      CALL_OVERLAY.set(consultation.id, {
+        patient_name: patient_name || 'Patient',
+        patient_code: patient_code || 'PAT-RECORD',
+        doctor_name: doctor_name || defaultDoctor?.name || 'On-call Doctor',
+        risk_level: String(risk_level).toUpperCase(),
+        scheduled_time: when,
+        reason,
+        ringing: false
+      });
+    }
+
+    await logAuditEvent({
+      actorId: req.user?.id,
+      actorRole: req.user?.role,
+      action: 'CONSULTATION_SCHEDULED',
+      entityType: 'CONSULTATIONS',
+      entityId: consultation?.id,
+      metadata: { patient_id, visit_id, scheduled_time: when, risk_level }
+    });
 
     return res.status(201).json({
-      message: 'Video Consultation scheduled successfully',
-      consultation: newConsultation,
-      room_id: roomId
+      message: 'Video consultation scheduled.',
+      consultation: consultation
+        ? { ...consultation, ...CALL_OVERLAY.get(consultation.id), appointment_id: appointment?.id }
+        : { room_id: roomId, persisted: false },
+      room_id: roomId,
+      persisted: Boolean(consultation)
     });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to schedule consultation', details: error.message });
   }
 };
 
-// Get All Scheduled Teleconsultations
+/**
+ * GET /api/consultations — active + waiting consultations with joined context.
+ */
 export const getConsultations = async (req, res) => {
   try {
-    let dbConsults = [];
-    try {
-      const { data } = await supabaseAdmin.from('consultations').select('*').neq('status', 'DECLINED').order('created_at', { ascending: false });
-      if (data && data.length > 0) dbConsults = data;
-    } catch (e) {}
+    const { data, error } = await supabaseAdmin
+      .from('consultations')
+      .select('*, visits(id, visit_code, risk_level, chief_complaint, patients(id, full_name, patient_code, village))')
+      .neq('status', 'cancelled')
+      .order('created_at', { ascending: false })
+      .limit(50);
 
-    const combinedMap = new Map();
-    MEMORY_CONSULTATIONS.filter(c => c.status !== 'DECLINED').forEach(c => combinedMap.set(c.id, c));
-    dbConsults.filter(c => c.status !== 'DECLINED').forEach(c => {
-      if (!combinedMap.has(c.id)) combinedMap.set(c.id, c);
+    if (error) {
+      console.warn('consultations fetch failed:', error.message);
+      return res.json([]);
+    }
+
+    const enriched = (data || []).map((c) => {
+      const overlay = CALL_OVERLAY.get(c.id) || {};
+      return {
+        ...c,
+        room_id: c.meeting_room_id,
+        patient_name: overlay.patient_name || c.visits?.patients?.full_name || 'Patient',
+        patient_code: overlay.patient_code || c.visits?.patients?.patient_code || '',
+        village: c.visits?.patients?.village || '',
+        risk_level: overlay.risk_level || (c.visits?.risk_level || 'medium').toUpperCase(),
+        reason: overlay.reason || c.visits?.chief_complaint || '',
+        doctor_name: overlay.doctor_name || 'On-call Doctor',
+        scheduled_time: overlay.scheduled_time || c.created_at,
+        ringing: Boolean(overlay.ringing) && c.status === 'waiting'
+      };
     });
 
-    return res.json(Array.from(combinedMap.values()));
+    return res.json(enriched);
   } catch (error) {
     return res.status(500).json({ error: 'Failed to fetch consultations', details: error.message });
   }
 };
 
-// Decline Video Call
 export const declineConsultation = async (req, res) => {
   try {
     const { id } = req.params;
-    let consult = MEMORY_CONSULTATIONS.find(c => c.id === id || c.visit_id === id || c.room_id === id);
 
-    if (consult) {
-      consult.status = 'DECLINED';
-    }
-
-    try {
-      await supabaseAdmin.from('consultations').update({ status: 'DECLINED' }).eq('id', id);
-    } catch (e) {}
+    const { error } = await supabaseAdmin.from('consultations').update({ status: 'cancelled' }).eq('id', asUuid(id));
+    if (error) console.warn('consultation decline update failed:', error.message);
+    const overlay = CALL_OVERLAY.get(id);
+    if (overlay) overlay.ringing = false;
 
     await logAuditEvent({
-      actorId: req.user?.id || 'dr_1',
-      actorRole: 'DOCTOR',
+      actorId: req.user?.id,
+      actorRole: req.user?.role,
       action: 'CONSULTATION_DECLINED',
       entityType: 'CONSULTATIONS',
       entityId: id
     });
 
-    console.log(`🛑 Consultation Call ${id} DECLINED.`);
-    return res.json({ message: 'Call declined successfully', status: 'DECLINED' });
+    return res.json({ message: 'Consultation declined.', status: 'cancelled' });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 };
 
-// Join Video Consultation Room — Explicit User Action Only
+/**
+ * POST /api/consultations/:id/join — explicit user action to enter the room.
+ */
 export const joinConsultation = async (req, res) => {
   try {
     const { id } = req.params;
-    let consult = MEMORY_CONSULTATIONS.find(c => c.id === id || c.visit_id === id || c.room_id === id);
 
-    if (consult && consult.status === 'COMPLETED') {
-      return res.status(400).json({ error: 'Call has already ended', status: 'COMPLETED' });
+    let consult = null;
+    if (asUuid(id)) {
+      const { data } = await supabaseAdmin.from('consultations').select('*').eq('id', id).maybeSingle();
+      consult = data;
+    }
+    if (!consult) {
+      // Allow joining by room id as well
+      const { data } = await supabaseAdmin.from('consultations').select('*').eq('meeting_room_id', id).maybeSingle();
+      consult = data;
     }
 
-    const roomId = consult ? consult.room_id : `room_${id.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    if (consult?.status === 'completed') {
+      return res.status(400).json({ error: 'This consultation has already ended.', status: 'completed' });
+    }
+
+    const roomId = consult?.meeting_room_id || `room_${id.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
     if (consult) {
-      consult.status = 'ONGOING';
-      consult.doctor_joined = req.user?.role === 'DOCTOR' ? true : consult.doctor_joined;
-      consult.patient_joined = req.user?.role === 'CLINIC_ASSISTANT' ? true : consult.patient_joined;
+      const { error } = await supabaseAdmin
+        .from('consultations')
+        .update({ status: 'active', started_at: consult.started_at || new Date().toISOString() })
+        .eq('id', consult.id);
+      if (error) console.warn('consultation join update failed:', error.message);
+      const overlay = CALL_OVERLAY.get(consult.id);
+      if (overlay) overlay.ringing = false;
     }
 
-    try {
-      await supabaseAdmin.from('consultations').update({ status: 'ONGOING' }).eq('id', id);
-    } catch (e) {}
-
     await logAuditEvent({
-      actorId: req.user?.id || 'user_101',
-      actorRole: req.user?.role || 'CLINIC_ASSISTANT',
+      actorId: req.user?.id,
+      actorRole: req.user?.role,
       action: 'CONSULTATION_JOINED',
       entityType: 'CONSULTATIONS',
-      entityId: id
+      entityId: consult?.id || id
     });
 
     return res.json({
-      message: 'Joining Video Consultation Room',
-      consultation_id: id,
+      message: 'Joining video consultation room.',
+      consultation_id: consult?.id || id,
       room_id: roomId,
-      status: 'ONGOING',
+      status: 'active',
       user_id: req.user?.id || `user_${Date.now()}`,
-      user_name: req.user?.name || (req.user?.role === 'DOCTOR' ? 'Doctor' : 'Clinic Assistant & Patient')
+      user_name: req.user?.name || (req.user?.role === 'DOCTOR' ? 'Doctor' : 'Clinic Assistant')
     });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to join video consultation', details: error.message });
   }
 };
 
-export const createConsultation = async (req, res) => {
-  return scheduleConsultation(req, res);
-};
-
-export const startConsultation = async (req, res) => {
-  return joinConsultation(req, res);
-};
+export const createConsultation = async (req, res) => scheduleConsultation(req, res);
+export const startConsultation = async (req, res) => joinConsultation(req, res);
 
 export const endConsultation = async (req, res) => {
   try {
     const { id } = req.params;
-    const { doctor_notes } = req.body;
 
-    let consult = MEMORY_CONSULTATIONS.find(c => c.id === id || c.visit_id === id || c.room_id === id);
-    if (consult) {
-      consult.status = 'COMPLETED';
-      consult.doctor_notes = doctor_notes || 'Teleconsultation completed.';
+    const target = asUuid(id);
+    if (target) {
+      const { error } = await supabaseAdmin
+        .from('consultations')
+        .update({ status: 'completed', ended_at: new Date().toISOString() })
+        .eq('id', target);
+      if (error) console.warn('consultation end update failed:', error.message);
     }
-
-    try {
-      await supabaseAdmin.from('consultations').update({
-        status: 'COMPLETED',
-        ended_at: new Date().toISOString(),
-        doctor_notes: doctor_notes || 'Teleconsultation completed.'
-      }).eq('id', id);
-    } catch (e) {}
+    CALL_OVERLAY.delete(id);
 
     await logAuditEvent({
       actorId: req.user?.id,
@@ -337,7 +382,7 @@ export const endConsultation = async (req, res) => {
       entityId: id
     });
 
-    return res.json({ message: 'Consultation completed successfully', status: 'COMPLETED' });
+    return res.json({ message: 'Consultation completed.', status: 'completed' });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to end consultation', details: error.message });
   }

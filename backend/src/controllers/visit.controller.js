@@ -156,61 +156,88 @@ export const createVisit = async (req, res) => {
       preferred_consultation_language: preferred_language
     };
 
-    let newVisit = null;
-    try {
-      const { data, error } = await supabaseAdmin
-        .from('visits')
-        .insert([visitRecord])
-        .select()
-        .single();
-      
-      if (!error && data) {
-        newVisit = data;
-        
-        // Insert into visit_vitals table
-        try {
-          await supabaseAdmin.from('visit_vitals').insert([{
+    const { data: newVisit, error: visitErr } = await supabaseAdmin
+      .from('visits')
+      .insert([visitRecord])
+      .select()
+      .single();
+
+    if (visitErr || !newVisit) {
+      console.error('visits insert FAILED:', visitErr?.message);
+      return res.status(500).json({ error: 'Visit could not be saved to the database.', details: visitErr?.message });
+    }
+
+    // Vitals
+    const { error: vitalsErr } = await supabaseAdmin.from('visit_vitals').insert([{
+      visit_id: newVisit.id,
+      temperature_celsius: cleanVitals.temperature_celsius,
+      systolic_bp: cleanVitals.systolic_bp,
+      diastolic_bp: cleanVitals.diastolic_bp,
+      pulse_bpm: cleanVitals.pulse_bpm,
+      oxygen_saturation: cleanVitals.oxygen_saturation,
+      respiratory_rate: cleanVitals.respiratory_rate,
+      weight_kg: cleanVitals.weight_kg,
+      height_cm: cleanVitals.height_cm
+    }]);
+    if (vitalsErr) console.warn('visit_vitals insert failed:', vitalsErr.message);
+
+    // Symptoms with duration
+    if (symptoms || chief_complaint) {
+      const symptomNames = (symptoms || chief_complaint).split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+      if (symptomNames.length > 0) {
+        const { error: symErr } = await supabaseAdmin.from('visit_symptoms').insert(
+          symptomNames.map((name) => ({
             visit_id: newVisit.id,
-            temperature_celsius: cleanVitals.temperature_celsius,
-            systolic_bp: cleanVitals.systolic_bp,
-            diastolic_bp: cleanVitals.diastolic_bp,
-            pulse_bpm: cleanVitals.pulse_bpm,
-            oxygen_saturation: cleanVitals.oxygen_saturation,
-            respiratory_rate: cleanVitals.respiratory_rate,
-            weight_kg: cleanVitals.weight_kg,
-            height_cm: cleanVitals.height_cm
-          }]);
-        } catch (ve) {
-          console.warn('visit_vitals table insert warning:', ve.message);
-        }
-
+            symptom_name: name.slice(0, 255),
+            description: symptom_duration ? `Duration: ${symptom_duration}` : null
+          }))
+        );
+        if (symErr) console.warn('visit_symptoms insert failed:', symErr.message);
       }
-    } catch (e) {
-      console.warn('Supabase DB visit insert exception:', e.message);
     }
 
-    if (!newVisit) {
-      newVisit = {
-        id: `v_${Date.now()}`,
-        visit_code,
-        patient_id,
-        status: 'open',
-        chief_complaint: chiefComplaintText,
-        symptoms: chiefComplaintText,
-        symptom_duration: symptom_duration || '3 days',
-        medical_history: medical_history || 'No chronic history',
-        allergies: allergies || 'None',
-        current_medications: current_medications || 'None',
-        preferred_consultation_language: preferred_language,
-        vitals: cleanVitals,
-        created_at: new Date().toISOString()
-      };
-    } else {
-      newVisit.vitals = cleanVitals;
+    // Medical history, allergies, current medications -> patient longitudinal record
+    if (medical_history && medical_history.trim()) {
+      const { error: histErr } = await supabaseAdmin.from('patient_medical_history').insert(
+        medical_history.split(/[,;]/).map((c) => c.trim()).filter(Boolean).map((condition) => ({
+          patient_id,
+          condition_name: condition.slice(0, 255),
+          notes: `Reported during visit ${visit_code}`
+        }))
+      );
+      if (histErr) console.warn('patient_medical_history insert failed:', histErr.message);
     }
+    if (allergies && allergies.trim() && !/^(none|no known)/i.test(allergies.trim())) {
+      const { error: allErr } = await supabaseAdmin.from('patient_allergies').insert(
+        allergies.split(/[,;]/).map((a) => a.trim()).filter(Boolean).map((allergen) => ({
+          patient_id,
+          allergen: allergen.slice(0, 255),
+          notes: `Reported during visit ${visit_code}`
+        }))
+      );
+      if (allErr) console.warn('patient_allergies insert failed:', allErr.message);
+    }
+    if (current_medications && current_medications.trim() && !/^none/i.test(current_medications.trim())) {
+      const { error: medErr } = await supabaseAdmin.from('patient_medications').insert(
+        current_medications.split(/[,;]/).map((m) => m.trim()).filter(Boolean).map((medicine) => ({
+          patient_id,
+          medicine_name: medicine.slice(0, 255),
+          is_current: true,
+          source: 'assistant_reported'
+        }))
+      );
+      if (medErr) console.warn('patient_medications insert failed:', medErr.message);
+    }
+
+    newVisit.vitals = cleanVitals;
+    newVisit.symptoms = symptoms || chiefComplaintText;
+    newVisit.symptom_duration = symptom_duration || null;
+    newVisit.medical_history = medical_history || null;
+    newVisit.allergies = allergies || null;
+    newVisit.current_medications = current_medications || null;
 
     MEMORY_VISITS.unshift(newVisit);
-    console.log(`✅ Visit created & synced! Visit ID: ${newVisit.id} for Patient: ${patient_id}`);
+    console.log(`✅ Visit persisted: ${newVisit.id} (${visit_code}) for patient ${patient_id}`);
 
     logAuditEvent({
       actorId: req.user?.id || 'assistant_001',

@@ -114,13 +114,9 @@ export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, p
                 </div>
                 
                 {images.map((img, idx) => {
-                  const imgUrl = img.image_url || img.storage_path;
+                  const imgUrl = img.image_url || null;
                   const cvData = img.computer_vision_analysis || {};
-                  const obsFeatures = img.observable_features || [
-                    'Erythematous skin margin localized to affected anatomical region.',
-                    'Mild tissue swelling and superficial skin disruption observed.',
-                    'Intact surrounding skin barrier with no visible necrotic dark margins.'
-                  ];
+                  const obsFeatures = img.observable_features || [];
                   const warnings = img.warnings || [];
 
                   return (
@@ -146,21 +142,21 @@ export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, p
                           <div className="p-2.5 rounded-lg bg-purple-50/60 border border-purple-200">
                             <span className="font-bold text-purple-900 block text-[11px] uppercase tracking-wider mb-0.5">Tissue Margin Erythema</span>
                             <span className="text-slate-800 text-[11px] leading-snug block">
-                              {cvData.tissue_margin || 'Localized peripheral redness extending around skin boundary'}
+                              {cvData.tissue_margin || 'Not available from automated analysis'}
                             </span>
                           </div>
 
                           <div className="p-2.5 rounded-lg bg-purple-50/60 border border-purple-200">
                             <span className="font-bold text-purple-900 block text-[11px] uppercase tracking-wider mb-0.5">Surface Features & Swelling</span>
                             <span className="text-slate-800 text-[11px] leading-snug block">
-                              {cvData.surface_features || 'Subtle surface edema and tissue swelling observed in frame'}
+                              {cvData.surface_features || 'Not available from automated analysis'}
                             </span>
                           </div>
 
                           <div className="p-2.5 rounded-lg bg-purple-50/60 border border-purple-200">
                             <span className="font-bold text-purple-900 block text-[11px] uppercase tracking-wider mb-0.5">Exudate & Moisture</span>
                             <span className="text-slate-800 text-[11px] leading-snug block">
-                              {cvData.exudate_observation || 'No active profuse hemorrhage or gross purulent exudate detected'}
+                              {cvData.exudate_observation || 'Not available from automated analysis'}
                             </span>
                           </div>
                         </div>
@@ -187,7 +183,7 @@ export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, p
                       <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 space-y-1">
                         <div className="font-bold text-slate-900">Complete Cautious Summary for Doctor Review:</div>
                         <p className="leading-relaxed text-slate-800 text-[11px]">
-                          {img.cautious_summary || 'Visible localized redness (erythema) and mild tissue swelling observed in captured frame. Non-diagnostic observational summary prepared for doctor review.'}
+                          {img.cautious_summary || 'No automated visual analysis is available for this photograph — please review the image directly.'}
                         </p>
                       </div>
 

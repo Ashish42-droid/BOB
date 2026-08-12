@@ -81,7 +81,7 @@ function handleSignalingMessage(ws, data) {
   const targetRoomId = roomId || ws.roomId;
 
   if (!targetRoomId) {
-    ws.send(JSON.stringify({ type: 'error', message: 'roomId is required' }));
+    safeSend(ws, { type: 'error', message: 'roomId is required' });
     return;
   }
 
@@ -97,42 +97,53 @@ function handleSignalingMessage(ws, data) {
 
       const room = ROOMS.get(targetRoomId);
 
+      // A reconnecting user replaces their previous (stale) socket instead of
+      // being rejected with "room full".
+      for (const [peerWs] of room.entries()) {
+        if (peerWs !== ws && peerWs.userId === ws.userId) {
+          room.delete(peerWs);
+          try { peerWs.close(4000, 'Replaced by reconnection'); } catch {}
+        }
+      }
+
       // Max 2 participants per room (Doctor + Patient/Clinic Assistant)
       if (room.size >= 2 && !room.has(ws)) {
-        ws.send(JSON.stringify({
+        safeSend(ws, {
           type: 'error',
           message: 'Room is full (Maximum 2 participants allowed per call).'
-        }));
+        });
         return;
       }
 
       room.set(ws, { role: ws.role, userId: ws.userId });
       console.log(`👤 Peer Joined Room [${targetRoomId}]: User ${ws.userId} (${ws.role}). Room Size: ${room.size}`);
 
-      // Notify the existing peer if a second peer joined
+      // Notify both peers once the room is complete. Exactly ONE side may
+      // create the SDP offer — the newly joined (second) peer is elected
+      // initiator, which prevents offer glare.
       if (room.size === 2) {
         for (const [peerWs, peerInfo] of room.entries()) {
           if (peerWs !== ws) {
-            // Notify existing peer about new peer
-            peerWs.send(JSON.stringify({
+            safeSend(peerWs, {
               type: 'peer-joined',
               role: ws.role,
-              userId: ws.userId
-            }));
+              userId: ws.userId,
+              initiator: false
+            });
 
-            // Notify new peer about existing peer
-            ws.send(JSON.stringify({
+            safeSend(ws, {
               type: 'peer-joined',
               role: peerInfo.role,
-              userId: peerInfo.userId
-            }));
+              userId: peerInfo.userId,
+              initiator: true
+            });
           }
         }
       } else {
-        ws.send(JSON.stringify({
+        safeSend(ws, {
           type: 'joined-waiting',
           message: 'Joined room. Waiting for other participant...'
-        }));
+        });
       }
       break;
     }
@@ -176,7 +187,7 @@ function handleSignalingMessage(ws, data) {
     }
 
     case 'ping': {
-      ws.send(JSON.stringify({ type: 'pong' }));
+      safeSend(ws, { type: 'pong' });
       break;
     }
 
@@ -185,13 +196,22 @@ function handleSignalingMessage(ws, data) {
   }
 }
 
+function safeSend(ws, payload) {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  try {
+    ws.send(JSON.stringify(payload));
+  } catch (err) {
+    console.error(`Failed to send to user ${ws.userId}:`, err.message);
+  }
+}
+
 function relayToPeer(roomId, senderWs, payload) {
   const room = ROOMS.get(roomId);
   if (!room) return;
 
   for (const [peerWs] of room.entries()) {
-    if (peerWs !== senderWs && peerWs.readyState === WebSocket.OPEN) {
-      peerWs.send(JSON.stringify(payload));
+    if (peerWs !== senderWs) {
+      safeSend(peerWs, payload);
     }
   }
 }

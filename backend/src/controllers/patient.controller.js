@@ -61,48 +61,21 @@ export const createPatient = async (req, res) => {
       emergency_contact_phone: emergency_contact_phone || null
     };
 
-    let newPatient = null;
-    try {
-      const { data, error } = await supabaseAdmin
-        .from('patients')
-        .insert([patientRecord])
-        .select()
-        .single();
-      
-      if (!error && data) {
-        newPatient = data;
-        console.log(`🎉 SUPABASE DATABASE PATIENT INSERTED! ID: ${newPatient.id} (${newPatient.full_name})`);
-      } else if (error) {
-        console.warn(`⚠️ Supabase Patient Insert Warning:`, error.message);
-      }
-    } catch (e) {
-      console.warn('Supabase DB patient insert exception:', e.message);
+    const { data: newPatient, error: insertErr } = await supabaseAdmin
+      .from('patients')
+      .insert([patientRecord])
+      .select()
+      .single();
+
+    if (insertErr || !newPatient) {
+      console.error('patients insert FAILED:', insertErr?.message);
+      return res.status(500).json({ error: 'Patient could not be saved to the database.', details: insertErr?.message });
     }
 
-    if (!newPatient) {
-      newPatient = {
-        id: `pt_${Date.now()}`,
-        patient_code,
-        full_name: patientName,
-        name: patientName,
-        date_of_birth: date_of_birth || null,
-        age_years: parsedAge,
-        age: parsedAge,
-        gender: validGender,
-        phone: phone || null,
-        village,
-        district,
-        state,
-        preferred_language,
-        emergency_contact_name: emergency_contact_name || emergency_contact || null,
-        emergency_contact_phone: emergency_contact_phone || null,
-        created_at: new Date().toISOString()
-      };
-    }
-
-    // Unshift to real-time memory store
+    newPatient.name = newPatient.full_name;
+    newPatient.age = newPatient.age_years;
     MEMORY_PATIENTS.unshift(newPatient);
-    console.log(`✅ Patient registered & saved! Code: ${newPatient.patient_code} (${newPatient.full_name || newPatient.name})`);
+    console.log(`✅ Patient registered: ${newPatient.patient_code} (${newPatient.full_name})`);
 
     logAuditEvent({
       actorId: req.user?.id || 'assistant_001',

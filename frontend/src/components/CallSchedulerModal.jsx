@@ -3,13 +3,19 @@ import { Calendar, Clock, User, AlertTriangle, CheckCircle2, X } from 'lucide-re
 import api from '../services/api';
 
 export default function CallSchedulerModal({ patient, visitId, onClose, onScheduled }) {
-  const [selectedDoctor, setSelectedDoctor] = useState('Dr. Rajesh Sharma (AIIMS New Delhi)');
+  const [doctor, setDoctor] = useState(null);
   const [scheduledDate, setScheduledDate] = useState(new Date().toISOString().substring(0, 10));
   const [scheduledTime, setScheduledTime] = useState('10:30');
-  const [reason, setReason] = useState('Follow-up AI Clinical Teleconsultation');
+  const [reason, setReason] = useState('Follow-up teleconsultation');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    api.get('/calls/availability')
+      .then((res) => setDoctor(res.data?.[0] || null))
+      .catch(() => setDoctor(null));
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,8 +35,7 @@ export default function CallSchedulerModal({ patient, visitId, onClose, onSchedu
       const res = await api.post('/calls/schedule', {
         visit_id: visitId,
         patient_id: patient?.id,
-        doctor_id: 'dr_rajesh_sharma',
-        doctor_name: selectedDoctor,
+        doctor_id: doctor?.doctor_id,
         patient_name: patient?.full_name || patient?.name || 'Patient',
         patient_code: patient?.patient_code || 'PAT-RECORD',
         scheduled_time: targetDate.toISOString(),
@@ -81,18 +86,12 @@ export default function CallSchedulerModal({ patient, visitId, onClose, onSchedu
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           
-          <div>
-            <label className="block font-semibold text-slate-700 mb-1">Select Remote Specialist Doctor:</label>
-            <select
-              value={selectedDoctor}
-              onChange={(e) => setSelectedDoctor(e.target.value)}
-              className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-slate-900 focus:border-blue-500 outline-none font-medium"
-            >
-              <option value="Dr. Rajesh Sharma (AIIMS New Delhi)">Dr. Rajesh Sharma (AIIMS New Delhi) - General Physician</option>
-              <option value="Dr. Ananya Sen (JIPMER Puducherry)">Dr. Ananya Sen (JIPMER Puducherry) - Pediatrician</option>
-              <option value="Dr. Vikramaditya Rao (PGIMER Chandigarh)">Dr. Vikramaditya Rao (PGIMER Chandigarh) - Cardiologist</option>
-            </select>
-            <p className="text-[11px] text-slate-500 mt-1">Available Shift: 08:00 AM - 08:00 PM (Mon-Sat)</p>
+          <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+            <label className="block font-semibold text-slate-700 mb-0.5">On-call doctor</label>
+            <div className="font-bold text-slate-900">{doctor?.doctor_name || 'On-call Doctor'}</div>
+            <p className="text-[11px] text-slate-500">
+              {doctor?.specialization || 'General Medicine'} — available 08:00 to 20:00 (Mon-Sat)
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

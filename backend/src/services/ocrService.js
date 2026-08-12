@@ -1,103 +1,80 @@
 import { createWorker } from 'tesseract.js';
 import { groq } from '../config/groq.js';
-import { config } from '../config/env.js';
+import { geminiGenerateJson } from '../config/gemini.js';
 
 /**
- * Advanced Medical Document OCR & Information Extraction Pipeline
- * Uses Groq Vision multimodal / Tesseract OCR + Groq LLM parsing
+ * Medical Document OCR & Information Extraction Pipeline
+ *
+ * Order of engines:
+ *  1. Gemini 2.5 Flash multimodal (reads the image directly)
+ *  2. Tesseract.js OCR -> Groq llama-3.3 text structuring
+ *
+ * SAFETY: if every engine fails, this returns an explicit failure record
+ * (needs_manual_entry: true). It NEVER invents medications or diagnoses —
+ * fabricated clinical data in a medical record is dangerous and illegal.
  */
+
+const EXTRACTION_SCHEMA = `{
+  "document_type": "prescription" | "lab_report" | "medical_report" | "discharge_summary" | "other",
+  "date": "YYYY-MM-DD or Unknown",
+  "doctor_name": "Doctor name exactly as written, or Unknown",
+  "patient_name": "Patient name exactly as written, or Unknown",
+  "medications": [
+    { "name": "Medication name", "strength": "500 mg", "frequency": "Twice daily", "duration": "5 days", "instructions": "After meals" }
+  ],
+  "medical_history_conditions": ["Condition exactly as written"],
+  "allergies_noted": ["Allergy exactly as written"],
+  "diagnosis_notes": "Diagnosis/notes exactly as written in the document",
+  "raw_text_summary": "Complete readable text transcribed from the document"
+}`;
+
+const EXTRACTION_RULES = `You are a medical document transcription system.
+Transcribe ONLY what is actually visible in the document.
+NEVER guess, infer, or invent medications, dosages, diagnoses, or names.
+If a field is not readable or not present, use "Unknown" or an empty array.
+If the image is not a medical document or is unreadable, set document_type to "other" and explain in raw_text_summary.`;
+
 export const processMedicalDocument = async (fileBuffer, fileName = 'document.jpg', mimeType = 'image/jpeg') => {
   let rawText = '';
   let structuredData = null;
+  let engine = null;
 
-  console.log(`📄 Starting OCR processing for file: ${fileName} (${mimeType})`);
+  console.log(`📄 OCR pipeline start: ${fileName} (${mimeType})`);
 
-  // 1. ATTEMPT GROQ VISION OCR (for image uploads)
-  if (groq && fileBuffer && mimeType.startsWith('image/')) {
-    try {
-      console.log('👁️ Running Groq Multimodal Vision OCR extraction...');
-      const base64Image = fileBuffer.toString('base64');
-      const dataUrl = `data:${mimeType};base64,${base64Image}`;
+  if (!fileBuffer) {
+    return extractionFailure('No file data received by the OCR service.');
+  }
 
-      const visionModels = ['llama-3.2-90b-vision-preview', 'llama-3.2-11b-vision-instruct', 'llama-3.2-11b-vision-preview'];
-      let visionResponse = null;
+  // ---- Engine 1: Gemini multimodal (image documents) ----
+  if (mimeType.startsWith('image/')) {
+    const parsed = await geminiGenerateJson(
+      `${EXTRACTION_RULES}\nReturn strictly a JSON object with this schema:\n${EXTRACTION_SCHEMA}`,
+      'Transcribe and extract the structured medical information from this document image.',
+      { base64: fileBuffer.toString('base64'), mimeType }
+    );
 
-      for (const modelName of visionModels) {
-        try {
-          visionResponse = await groq.chat.completions.create({
-            model: modelName,
-            temperature: 0.1,
-            response_format: { type: 'json_object' },
-            messages: [
-              {
-                role: 'system',
-                content: `You are an expert medical OCR and document extraction system. 
-Read the prescription, lab report, or medical history document image carefully. 
-Extract ALL visible text, doctor notes, medicines, dosages, instructions, diagnosis, allergies, and past medical history.
-Return strictly a JSON object formatted as:
-{
-  "document_type": "prescription" | "lab_report" | "medical_report" | "discharge_summary" | "other",
-  "date": "YYYY-MM-DD or Unknown",
-  "doctor_name": "Doctor name or Unknown",
-  "patient_name": "Patient name or Unknown",
-  "medications": [
-    { "name": "Medication Name", "strength": "500 mg", "frequency": "Twice daily", "duration": "5 days", "instructions": "After meals" }
-  ],
-  "medical_history_conditions": ["Hypertension", "Diabetes"],
-  "allergies_noted": ["Penicillin"],
-  "diagnosis_notes": "Clinical diagnosis or notes from document",
-  "raw_text_summary": "Complete readable text extracted from document"
-}`
-              },
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: 'Transcribe and extract structured medical information from this prescription/report image.' },
-                  { type: 'image_url', image_url: { url: dataUrl } }
-                ]
-              }
-            ]
-          });
-          if (visionResponse) break;
-        } catch (mErr) {
-          console.warn(`Vision model ${modelName} unavailable, trying next...`);
-        }
-      }
-
-      if (visionResponse) {
-        const parsed = JSON.parse(visionResponse.choices[0].message.content);
-        if (parsed) {
-          structuredData = parsed;
-          rawText = parsed.raw_text_summary || JSON.stringify(parsed, null, 2);
-          console.log('✅ Groq Vision OCR successfully extracted medical data!');
-        }
-      }
-    } catch (vErr) {
-      console.warn('Groq Vision OCR call failed, falling back to Tesseract OCR:', vErr.message);
+    if (parsed && (parsed.raw_text_summary || parsed.medications)) {
+      structuredData = normalize(parsed);
+      rawText = parsed.raw_text_summary || '';
+      engine = 'gemini-2.5-flash';
+      console.log('✅ Gemini vision OCR extracted the document.');
     }
   }
 
-  // 2. TESSERACT OCR FALLBACK
-  if (!structuredData && fileBuffer) {
+  // ---- Engine 2: Tesseract OCR + Groq text structuring ----
+  if (!structuredData) {
     try {
-      console.log('🔤 Running Tesseract.js OCR...');
+      console.log('🔤 Running Tesseract.js OCR fallback...');
       const worker = await createWorker('eng');
       const ret = await worker.recognize(fileBuffer);
-      rawText = ret.data.text;
+      rawText = ret.data.text || '';
       await worker.terminate();
-      console.log('📝 Tesseract extracted text length:', rawText.length);
+      console.log(`📝 Tesseract extracted ${rawText.length} characters.`);
     } catch (tErr) {
-      console.warn('Tesseract OCR error, using text parser fallback:', tErr.message);
-    }
-  }
-
-  // If text was extracted via Tesseract but not yet parsed by LLM
-  if (!structuredData) {
-    if (!rawText) {
-      rawText = `Prescription Document - ${fileName}\nRx: Paracetamol 500mg - Twice daily after meals for 3 days.\nRx: Amoxicillin 500mg - Three times daily for 5 days.\nDiagnosis: Acute Upper Respiratory Symptoms.\nHistory: Seasonal allergies noted.`;
+      console.warn('Tesseract OCR error:', tErr.message);
     }
 
-    if (groq) {
+    if (rawText.trim().length >= 20 && groq) {
       try {
         const response = await groq.chat.completions.create({
           model: 'llama-3.3-70b-versatile',
@@ -106,57 +83,75 @@ Return strictly a JSON object formatted as:
           messages: [
             {
               role: 'system',
-              content: `You are an expert medical document parser. Extract structured medical information from OCR text of prescriptions/lab reports. Return JSON strictly formatted as:
-{
-  "document_type": "prescription" | "lab_report" | "medical_report" | "discharge_summary" | "other",
-  "date": "YYYY-MM-DD or Unknown",
-  "doctor_name": "Doctor name or Unknown",
-  "patient_name": "Patient name or Unknown",
-  "medications": [
-    { "name": "Medication Name", "strength": "500 mg", "frequency": "Twice daily", "duration": "5 days", "instructions": "After food" }
-  ],
-  "medical_history_conditions": ["Hypertension"],
-  "allergies_noted": ["Penicillin"],
-  "diagnosis_notes": "Summary of medical notes"
-}`
+              content: `${EXTRACTION_RULES}\nYou receive raw OCR text (may contain OCR noise). Return strictly a JSON object with this schema:\n${EXTRACTION_SCHEMA}`
             },
-            {
-              role: 'user',
-              content: `Raw OCR Text:\n${rawText}`
-            }
+            { role: 'user', content: `Raw OCR text:\n${rawText}` }
           ]
         });
 
         const parsed = JSON.parse(response.choices[0].message.content);
         if (parsed) {
-          structuredData = parsed;
+          structuredData = normalize(parsed);
+          engine = 'tesseract+llama-3.3-70b';
+          console.log('✅ Groq structured the Tesseract OCR text.');
         }
       } catch (llmErr) {
-        console.warn('LLM text parsing fallback used:', llmErr.message);
+        console.warn('Groq text structuring failed:', llmErr.message);
       }
     }
   }
 
-  // Ultimate structured default if vision & LLM are offline
+  // ---- Honest failure (no fabricated clinical data) ----
   if (!structuredData) {
-    structuredData = {
-      document_type: 'prescription',
-      date: new Date().toISOString().split('T')[0],
-      doctor_name: 'Dr. R. Sharma (MBBS)',
-      patient_name: 'Patient Record',
-      medications: [
-        { name: 'Paracetamol', strength: '500 mg', frequency: 'Twice daily', duration: '3 days', instructions: 'After meals' },
-        { name: 'Amoxicillin', strength: '500 mg', frequency: 'Three times daily', duration: '5 days', instructions: 'With water' }
-      ],
-      medical_history_conditions: ['Prior upper respiratory symptom'],
-      allergies_noted: ['No known allergies'],
-      diagnosis_notes: 'Acute febrile illness symptoms'
-    };
+    return extractionFailure(
+      rawText.trim().length > 0
+        ? 'Text was detected but could not be reliably structured. Please enter the details manually.'
+        : 'The document could not be read automatically. Please enter the details manually.',
+      rawText
+    );
   }
 
   return {
-    raw_text: rawText || 'Medical document recorded.',
+    raw_text: rawText,
     extracted_data: structuredData,
-    confidence: 0.95
+    ocr_engine: engine,
+    confidence: engine === 'gemini-2.5-flash' ? 0.9 : 0.7,
+    needs_manual_entry: false
   };
 };
+
+function normalize(parsed) {
+  return {
+    document_type: parsed.document_type || 'other',
+    date: parsed.date || 'Unknown',
+    doctor_name: parsed.doctor_name || 'Unknown',
+    patient_name: parsed.patient_name || 'Unknown',
+    medications: Array.isArray(parsed.medications) ? parsed.medications : [],
+    medical_history_conditions: Array.isArray(parsed.medical_history_conditions) ? parsed.medical_history_conditions : [],
+    allergies_noted: Array.isArray(parsed.allergies_noted) ? parsed.allergies_noted : [],
+    diagnosis_notes: parsed.diagnosis_notes || '',
+    raw_text_summary: parsed.raw_text_summary || ''
+  };
+}
+
+function extractionFailure(message, rawText = '') {
+  console.warn(`⚠️ OCR extraction failed: ${message}`);
+  return {
+    raw_text: rawText,
+    extracted_data: {
+      document_type: 'other',
+      date: 'Unknown',
+      doctor_name: 'Unknown',
+      patient_name: 'Unknown',
+      medications: [],
+      medical_history_conditions: [],
+      allergies_noted: [],
+      diagnosis_notes: '',
+      raw_text_summary: '',
+      extraction_error: message
+    },
+    ocr_engine: 'none',
+    confidence: 0,
+    needs_manual_entry: true
+  };
+}

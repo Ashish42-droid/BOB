@@ -18,12 +18,12 @@ export const uploadDocument = async (req, res) => {
     const storagePath = `medical_documents/${patient_id}/${fileName}`;
 
     // Upload file to Supabase Storage bucket 'medical-docs'
-    try {
-      await supabaseAdmin.storage
-        .from('medical-docs')
-        .upload(storagePath, file.buffer, { contentType: file.mimetype, upsert: true });
-    } catch (stgErr) {
-      console.warn('Supabase storage upload fallback path used:', stgErr.message);
+    const { error: stgErr } = await supabaseAdmin.storage
+      .from('medical-docs')
+      .upload(storagePath, file.buffer, { contentType: file.mimetype, upsert: true });
+    if (stgErr) {
+      console.error('Storage upload FAILED:', stgErr.message);
+      return res.status(500).json({ error: 'Document file could not be uploaded to storage.', details: stgErr.message });
     }
 
     // Insert into `patient_documents`
@@ -39,22 +39,14 @@ export const uploadDocument = async (req, res) => {
       status: 'uploaded'
     };
 
-    let newDoc = null;
-    try {
-      const { data, error } = await supabaseAdmin
-        .from('patient_documents')
-        .insert([docRecord])
-        .select()
-        .single();
-      if (!error && data) newDoc = data;
-    } catch (e) {}
-
-    if (!newDoc) {
-      newDoc = {
-        id: `doc_${Date.now()}`,
-        ...docRecord,
-        uploaded_at: new Date().toISOString()
-      };
+    const { data: newDoc, error: docErr } = await supabaseAdmin
+      .from('patient_documents')
+      .insert([docRecord])
+      .select()
+      .single();
+    if (docErr || !newDoc) {
+      console.error('patient_documents insert FAILED:', docErr?.message);
+      return res.status(500).json({ error: 'Document record could not be saved.', details: docErr?.message });
     }
 
     await logAuditEvent({
@@ -72,34 +64,32 @@ export const uploadDocument = async (req, res) => {
     // Save into `document_extractions`
     const extractionRecord = {
       document_id: newDoc.id,
-      extracted_text: ocrResult.raw_text || 'OCR Extracted Prescription Content',
+      extracted_text: ocrResult.raw_text || '',
       structured_data: ocrResult.extracted_data || {},
-      ocr_engine: 'TesseractJS_Groq',
-      confidence: ocrResult.confidence || 0.95
+      ocr_engine: ocrResult.ocr_engine || 'none',
+      confidence: ocrResult.confidence ?? 0
     };
 
-    let newExtraction = null;
-    try {
-      const { data } = await supabaseAdmin
-        .from('document_extractions')
-        .insert([extractionRecord])
-        .select()
-        .single();
-      if (data) newExtraction = data;
-    } catch (e) {}
+    const { data: newExtraction, error: extErr } = await supabaseAdmin
+      .from('document_extractions')
+      .insert([extractionRecord])
+      .select()
+      .single();
+    if (extErr) console.warn('document_extractions insert failed:', extErr.message);
 
-    // Update document status to extracted
-    try {
-      await supabaseAdmin
-        .from('patient_documents')
-        .update({ status: 'extracted' })
-        .eq('id', newDoc.id);
-    } catch (e) {}
+    // Update document status
+    const newStatus = ocrResult.needs_manual_entry ? 'failed' : 'extracted';
+    const { error: statusErr } = await supabaseAdmin
+      .from('patient_documents')
+      .update({ status: newStatus })
+      .eq('id', newDoc.id);
+    if (statusErr) console.warn('patient_documents status update failed:', statusErr.message);
 
     return res.status(201).json({
-      document: newDoc,
+      document: { ...newDoc, status: newStatus },
       extraction: newExtraction || extractionRecord,
-      raw_ocr: ocrResult.raw_text
+      raw_ocr: ocrResult.raw_text,
+      needs_manual_entry: Boolean(ocrResult.needs_manual_entry)
     });
 
   } catch (error) {

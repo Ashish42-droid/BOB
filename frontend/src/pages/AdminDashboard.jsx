@@ -71,17 +71,17 @@ export default function AdminDashboard() {
           <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <UserCog className="w-5 h-5 text-purple-600" /> Platform Admin Dashboard
           </h1>
-          <p className="text-xs text-slate-500">National Rural Healthcare Telemedicine Network & India-Level Analytics</p>
+          <p className="text-xs text-slate-500">Staff accounts, clinical protocols, audit trail and live platform metrics</p>
         </div>
       </div>
 
       {/* Navigation Tabs */}
       <div className="flex overflow-x-auto gap-2 border-b border-slate-200 pb-2">
         {[
-          { id: 'analytics', label: 'India-Level Analytics', icon: <BarChart3 className="w-4 h-4" /> },
-          { id: 'doctors', label: 'Registered Doctors (5 Panel)', icon: <Stethoscope className="w-4 h-4" /> },
-          { id: 'protocols', label: 'Knowledge Base & Qdrant RAG', icon: <BookOpen className="w-4 h-4" /> },
-          { id: 'audit', label: 'System Compliance Audit Logs', icon: <Database className="w-4 h-4" /> }
+          { id: 'analytics', label: 'Platform Metrics', icon: <BarChart3 className="w-4 h-4" /> },
+          { id: 'doctors', label: 'Staff Accounts', icon: <Stethoscope className="w-4 h-4" /> },
+          { id: 'protocols', label: 'Clinical Protocols', icon: <BookOpen className="w-4 h-4" /> },
+          { id: 'audit', label: 'Audit Logs', icon: <Database className="w-4 h-4" /> }
         ].map(t => (
           <button
             key={t.id}
@@ -97,94 +97,74 @@ export default function AdminDashboard() {
       {activeTab === 'analytics' && (
         <div className="space-y-6">
           
-          {/* Top Key Performance Indicators */}
+          {/* Live platform metrics from the database */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-              <span className="text-xs text-slate-500 font-medium block">Connected Tele-Clinics</span>
-              <h3 className="text-2xl font-bold text-blue-600 mt-1">142</h3>
-              <span className="text-[11px] text-slate-500 mt-1 block">Across 12 Indian States</span>
+              <span className="text-xs text-slate-500 font-medium block">Registered Patients</span>
+              <h3 className="text-2xl font-bold text-blue-600 mt-1">{analytics?.total_patients ?? '—'}</h3>
+              <span className="text-[11px] text-slate-500 mt-1 block">Total in database</span>
             </div>
 
             <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-              <span className="text-xs text-slate-500 font-medium block">Total Patients Served</span>
-              <h3 className="text-2xl font-bold text-emerald-600 mt-1">4,820</h3>
-              <span className="text-[11px] text-slate-500 mt-1 block">Rural Citizens Treated</span>
+              <span className="text-xs text-slate-500 font-medium block">Visits Today</span>
+              <h3 className="text-2xl font-bold text-emerald-600 mt-1">{analytics?.today_patients ?? '—'}</h3>
+              <span className="text-[11px] text-slate-500 mt-1 block">Since midnight</span>
             </div>
 
             <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-              <span className="text-xs text-slate-500 font-medium block">Completed Consultations</span>
-              <h3 className="text-2xl font-bold text-purple-600 mt-1">3,410</h3>
-              <span className="text-[11px] text-slate-500 mt-1 block">Signed Prescriptions Issued</span>
+              <span className="text-xs text-slate-500 font-medium block">Awaiting Doctor Review</span>
+              <h3 className="text-2xl font-bold text-amber-600 mt-1">{analytics?.waiting_for_doctor ?? '—'}</h3>
+              <span className="text-[11px] text-slate-500 mt-1 block">Cases in queue</span>
             </div>
 
             <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-              <span className="text-xs text-slate-500 font-medium block">Avg Doctor Response Time</span>
-              <h3 className="text-2xl font-bold text-amber-600 mt-1">4.2 Mins</h3>
-              <span className="text-[11px] text-slate-500 mt-1 block">Queue Turnaround</span>
+              <span className="text-xs text-slate-500 font-medium block">High-Risk Open Cases</span>
+              <h3 className="text-2xl font-bold text-red-600 mt-1">{analytics?.high_risk_cases ?? '—'}</h3>
+              <span className="text-[11px] text-slate-500 mt-1 block">Need urgent attention</span>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            {/* Risk Distribution Breakdown */}
+
+            {/* Risk Distribution from the live database */}
             <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-4">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <PieChart className="w-4 h-4 text-blue-600" /> AI Patient Risk Triage Segregation
+                <PieChart className="w-4 h-4 text-blue-600" /> Case Triage Distribution (HIGH / MEDIUM / LOW)
               </h3>
               <div className="space-y-3">
-                {[
-                  { level: 'LOW (GREEN)', percentage: 65, color: 'bg-emerald-500', desc: 'Protocol-Eligible / Approved First-Aid Guidance' },
-                  { level: 'MODERATE (YELLOW)', percentage: 22, color: 'bg-amber-500', desc: 'Requires Non-Urgent Doctor Review' },
-                  { level: 'HIGH (ORANGE)', percentage: 10, color: 'bg-orange-500', desc: 'Priority Doctor Consultation Queue' },
-                  { level: 'EMERGENCY (RED)', percentage: 3, color: 'bg-red-600', desc: 'Immediate Red Alert & Hospital Referral' }
-                ].map((item, idx) => (
-                  <div key={idx} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
-                      <span>{item.level}</span>
-                      <span>{item.percentage}%</span>
+                {['HIGH', 'MEDIUM', 'LOW'].map((level) => {
+                  const item = analytics?.risk_distribution?.[level] || { count: 0, percentage: 0, label: '' };
+                  const color = level === 'HIGH' ? 'bg-red-600' : level === 'MEDIUM' ? 'bg-amber-500' : 'bg-emerald-500';
+                  return (
+                    <div key={level} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                        <span>{level} — {item.count} case(s)</span>
+                        <span>{item.percentage}%</span>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                        <div className={`h-full ${color}`} style={{ width: `${item.percentage}%` }} />
+                      </div>
+                      <p className="text-[11px] text-slate-500">{item.label}</p>
                     </div>
-                    <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                      <div className={`h-full ${item.color}`} style={{ width: `${item.percentage}%` }} />
-                    </div>
-                    <p className="text-[11px] text-slate-500">{item.desc}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
-            {/* State-Wise Tele-Clinic Coverage */}
+            {/* Consultation totals */}
             <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-4">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Building className="w-4 h-4 text-emerald-600" /> State-Wise Tele-Health Network Coverage
+                <Building className="w-4 h-4 text-emerald-600" /> Consultation Outcomes
               </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] border-b border-slate-200">
-                    <tr>
-                      <th className="px-3 py-2">State</th>
-                      <th className="px-3 py-2">Clinics</th>
-                      <th className="px-3 py-2">Patients</th>
-                      <th className="px-3 py-2">Emergency Referrals</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-800">
-                    {[
-                      { state: 'Uttar Pradesh', clinics: 34, patients: 1240, referrals: 12 },
-                      { state: 'Bihar', clinics: 28, patients: 980, referrals: 9 },
-                      { state: 'Madhya Pradesh', clinics: 22, patients: 750, referrals: 7 },
-                      { state: 'West Bengal', clinics: 18, patients: 620, referrals: 5 },
-                      { state: 'Rajasthan', clinics: 14, patients: 450, referrals: 4 },
-                      { state: 'Odisha', clinics: 12, patients: 380, referrals: 3 }
-                    ].map((st, i) => (
-                      <tr key={i}>
-                        <td className="px-3 py-2 font-semibold text-slate-900">{st.state}</td>
-                        <td className="px-3 py-2">{st.clinics}</td>
-                        <td className="px-3 py-2 text-blue-600 font-medium">{st.patients}</td>
-                        <td className="px-3 py-2 text-red-600 font-bold">{st.referrals}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-slate-500 block">Completed Visits</span>
+                  <span className="text-xl font-bold text-slate-900">{analytics?.completed_visits ?? '—'}</span>
+                </div>
+                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-slate-500 block">Completed Video Consultations</span>
+                  <span className="text-xl font-bold text-slate-900">{analytics?.completed_consultations ?? '—'}</span>
+                </div>
               </div>
             </div>
 
@@ -239,14 +219,15 @@ export default function AdminDashboard() {
                 type="submit"
                 className="w-full py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs shadow-sm transition-colors"
               >
-                CREATE USER ACCOUNT
+                Create Staff Account
               </button>
+              <p className="text-[11px] text-slate-500">The account is created with the temporary password <code className="font-mono">ChangeMe@123</code> — ask the staff member to sign in and change it.</p>
             </form>
 
             {/* 5 Qualified Doctor Roster */}
             <div className="lg:col-span-2 bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-4">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Stethoscope className="w-4 h-4 text-emerald-600" /> Qualified Remote Doctor Roster (5 Medical Specialists)
+                <Stethoscope className="w-4 h-4 text-emerald-600" /> Registered Doctors
               </h3>
               <div className="space-y-3">
                 {(analytics?.active_doctors || doctorsList).map((doc, idx) => (
@@ -313,7 +294,7 @@ export default function AdminDashboard() {
               type="submit"
               className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm transition-colors"
             >
-              INGEST TO QDRANT RAG (approved = true)
+              Add Protocol to Knowledge Base
             </button>
           </form>
 

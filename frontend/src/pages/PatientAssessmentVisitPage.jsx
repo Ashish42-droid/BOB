@@ -6,26 +6,27 @@ import RiskBadge from '../components/RiskBadge';
 import OCRVerificationModal from '../components/OCRVerificationModal';
 import WebRTCVideoCallModal from '../components/WebRTCVideoCallModal';
 import CallSchedulerModal from '../components/CallSchedulerModal';
+import { useAuth } from '../context/AuthContext';
 
 export default function PatientAssessmentVisitPage() {
   const { id: patientId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [patient, setPatient] = useState(null);
   const [visitId, setVisitId] = useState(null);
-  
+
   // Tab states
   const [activeTab, setActiveTab] = useState('symptoms');
-  
-  // Symptoms & Voice Input
-  const [symptomsText, setSymptomsText] = useState('Tez bukhar 3 din se aur khansi (High fever for 3 days and dry cough)');
-  const [duration, setDuration] = useState('3 days');
-  const [medicalHistory, setMedicalHistory] = useState('No chronic hypertension or diabetes history');
-  const [recording, setRecording] = useState(false);
-  const [detectedLanguage, setDetectedLanguage] = useState('Auto-Detecting...');
 
-  // Selected Doctor for Video Call
-  const [selectedDoctor, setSelectedDoctor] = useState('Dr. Rajesh Sharma (AIIMS New Delhi)');
+  // Symptoms & Voice Input
+  const [symptomsText, setSymptomsText] = useState('');
+  const [duration, setDuration] = useState('');
+  const [medicalHistory, setMedicalHistory] = useState('');
+  const [recording, setRecording] = useState(false);
+  const [detectedLanguage, setDetectedLanguage] = useState('Auto-detect');
+
+  // Video call & scheduling
   const [activeVideoRoom, setActiveVideoRoom] = useState(null);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [pushingToDoctor, setPushingToDoctor] = useState(false);
@@ -35,17 +36,17 @@ export default function PatientAssessmentVisitPage() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const recognitionRef = useRef(null);
-  
-  // Vitals with Strict Min/Max Clinical Range Verification
+
+  // Vitals with strict clinical range validation (entered by the assistant)
   const [vitals, setVitals] = useState({
-    temperature: '101.2',
-    blood_pressure_systolic: '120',
-    blood_pressure_diastolic: '80',
-    pulse: '88',
-    spo2: '97',
-    respiratory_rate: '18',
-    weight: '62',
-    height: '168'
+    temperature: '',
+    blood_pressure_systolic: '',
+    blood_pressure_diastolic: '',
+    pulse: '',
+    spo2: '',
+    respiratory_rate: '',
+    weight: '',
+    height: ''
   });
   const [vitalsError, setVitalsError] = useState(null);
 
@@ -76,15 +77,25 @@ export default function PatientAssessmentVisitPage() {
     try {
       const pRes = await api.get(`/patients/${patientId}`);
       setPatient(pRes.data);
-
-      const vRes = await api.post('/visits', {
-        patient_id: patientId,
-        chief_complaint: 'Routine Clinical Visit'
-      });
-      setVisitId(vRes.data.id);
     } catch (err) {
-      console.error('Error fetching patient/visit:', err);
+      console.error('Error fetching patient:', err);
     }
+  };
+
+  // The visit record is created once, with the real complaint and vitals,
+  // the first time it is needed (document upload or AI assessment).
+  const ensureVisit = async () => {
+    if (visitId) return visitId;
+    const vRes = await api.post('/visits', {
+      patient_id: patientId,
+      chief_complaint: symptomsText || 'Clinical assessment visit',
+      symptoms: symptomsText,
+      symptom_duration: duration,
+      medical_history: medicalHistory,
+      vitals
+    });
+    setVisitId(vRes.data.id);
+    return vRes.data.id;
   };
 
   const handleVitalsChange = (field, value) => {
@@ -183,23 +194,32 @@ export default function PatientAssessmentVisitPage() {
     if (!file) return;
 
     setUploadingDoc(true);
-    const formData = new FormData();
-    formData.append('document', file);
-    formData.append('visit_id', visitId || '');
-    formData.append('document_type', 'prescription');
-
     try {
+      const vId = await ensureVisit();
+      const formData = new FormData();
+      formData.append('document', file);
+      formData.append('patient_id', patientId);
+      formData.append('visit_id', vId);
+      formData.append('document_type', 'prescription');
+
       const res = await api.post('/documents/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      const docData = res.data;
-      setUploadedDocuments(prev => [...prev, docData]);
+      const { document: doc, extraction, raw_ocr, needs_manual_entry } = res.data;
+      setUploadedDocuments(prev => [...prev, doc]);
 
-      if (docData.ocr_data) {
-        setCurrentDocument(docData);
-        setShowOCRModal(true);
+      if (needs_manual_entry) {
+        alert('The document could not be read automatically. Please enter the prescription details manually in the verification window.');
       }
+
+      // Human verification is always required before OCR data joins the record
+      setCurrentDocument({
+        id: doc.id,
+        ocr_data: extraction?.structured_data || {},
+        raw_text: raw_ocr || ''
+      });
+      setShowOCRModal(true);
     } catch (err) {
       console.error('Document upload error:', err);
       alert('Document upload failed: ' + formatApiError(err));
@@ -216,12 +236,13 @@ export default function PatientAssessmentVisitPage() {
     setImagePreview(URL.createObjectURL(file));
     setUploadingImage(true);
 
-    const formData = new FormData();
-    formData.append('image', file);
-    formData.append('patient_id', patientId || '');
-    formData.append('visit_id', visitId || '');
-
     try {
+      const vId = await ensureVisit();
+      const formData = new FormData();
+      formData.append('image', file);
+      formData.append('patient_id', patientId || '');
+      formData.append('visit_id', vId);
+
       const res = await api.post('/vision/analyze', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
@@ -246,6 +267,11 @@ export default function PatientAssessmentVisitPage() {
   };
 
   const handleRunAIAssessment = async () => {
+    if (!symptomsText.trim()) {
+      setActiveTab('symptoms');
+      alert('Enter the patient’s symptoms before generating the AI assessment.');
+      return;
+    }
     const error = validateVitalsBounds();
     if (error) {
       setVitalsError(error);
@@ -257,8 +283,9 @@ export default function PatientAssessmentVisitPage() {
     setApiError(null);
 
     try {
+      const vId = await ensureVisit();
       const payload = {
-        visit_id: visitId,
+        visit_id: vId,
         patient_id: patientId,
         symptoms: symptomsText,
         symptom_duration: duration,
@@ -290,9 +317,7 @@ export default function PatientAssessmentVisitPage() {
         patient_name: patient?.full_name || patient?.name,
         patient_code: patient?.patient_code,
         village: patient?.village,
-        risk_level: aiAssessment?.risk_level || 'MODERATE',
-        reason: 'High Priority AI Case Assessment Review',
-        ai_summary: aiAssessment,
+        ai_assessment: aiAssessment,
         vision_observation: visionObservation,
         verified_ocr_data: verifiedOCRData
       });
@@ -323,7 +348,7 @@ export default function PatientAssessmentVisitPage() {
 
     setActiveVideoRoom({
       room_id: roomId,
-      user_name: 'Sunita Devi (Clinical Assistant)'
+      user_name: user?.name || 'Clinic Assistant'
     });
   };
 
@@ -367,19 +392,19 @@ export default function PatientAssessmentVisitPage() {
             <div class="field"><span class="label">Age / Gender:</span> <span class="value">${patient?.age_years || patient?.age || 'N/A'} yrs / ${patient?.gender || 'N/A'}</span></div>
             <div class="field"><span class="label">Village / Location:</span> <span class="value">${patient?.village || 'N/A'}</span></div>
             <div class="field"><span class="label">Contact Phone:</span> <span class="value">${patient?.phone || 'N/A'}</span></div>
-            <div class="field"><span class="label">Attending Assistant:</span> <span class="value">Sunita Devi (ANM)</span></div>
+            <div class="field"><span class="label">Attending Assistant:</span> <span class="value">${user?.name || 'Clinic Assistant'}</span></div>
           </div>
         </div>
 
         <div class="section">
           <div class="section-title">2. Recorded Clinical Vitals (With Units)</div>
           <div class="grid-3">
-            <div class="field"><span class="label">Body Temperature:</span> <span class="value">${vitals.temperature || '101.2'} °F</span></div>
-            <div class="field"><span class="label">Blood Pressure:</span> <span class="value">${vitals.blood_pressure_systolic || '120'}/${vitals.blood_pressure_diastolic || '80'} mmHg</span></div>
-            <div class="field"><span class="label">Pulse Rate:</span> <span class="value">${vitals.pulse || '88'} bpm</span></div>
-            <div class="field"><span class="label">SpO2 Oxygen Saturation:</span> <span class="value">${vitals.spo2 || '97'} %</span></div>
-            <div class="field"><span class="label">Respiratory Rate:</span> <span class="value">${vitals.respiratory_rate || '18'} /min</span></div>
-            <div class="field"><span class="label">Weight / Height:</span> <span class="value">${vitals.weight || '62'} kg / ${vitals.height || '168'} cm</span></div>
+            <div class="field"><span class="label">Body Temperature:</span> <span class="value">${vitals.temperature ? vitals.temperature + ' °F' : 'Not recorded'}</span></div>
+            <div class="field"><span class="label">Blood Pressure:</span> <span class="value">${vitals.blood_pressure_systolic ? `${vitals.blood_pressure_systolic}/${vitals.blood_pressure_diastolic || '?'} mmHg` : 'Not recorded'}</span></div>
+            <div class="field"><span class="label">Pulse Rate:</span> <span class="value">${vitals.pulse ? vitals.pulse + ' bpm' : 'Not recorded'}</span></div>
+            <div class="field"><span class="label">SpO2 Oxygen Saturation:</span> <span class="value">${vitals.spo2 ? vitals.spo2 + ' %' : 'Not recorded'}</span></div>
+            <div class="field"><span class="label">Respiratory Rate:</span> <span class="value">${vitals.respiratory_rate ? vitals.respiratory_rate + ' /min' : 'Not recorded'}</span></div>
+            <div class="field"><span class="label">Weight / Height:</span> <span class="value">${vitals.weight ? vitals.weight + ' kg' : '—'} / ${vitals.height ? vitals.height + ' cm' : '—'}</span></div>
           </div>
         </div>
 
@@ -394,7 +419,7 @@ export default function PatientAssessmentVisitPage() {
 
         <div class="section">
           <div class="section-title">4. AI-Generated Clinical Summary & Guidance</div>
-          <div class="field" style="margin-bottom: 8px;"><span class="label">Risk Status Level:</span> <span class="value" style="font-weight: bold; color: #DC2626;">${aiAssessment?.risk_level || 'MODERATE'}</span></div>
+          <div class="field" style="margin-bottom: 8px;"><span class="label">Triage Risk Level:</span> <span class="value" style="font-weight: bold; color: #DC2626;">${aiAssessment?.risk_level || 'Not assessed'}</span></div>
           <div class="field" style="margin-bottom: 8px;"><span class="label">Patient Summary:</span> <p class="value" style="margin: 4px 0;">${aiAssessment?.patient_summary || aiAssessment?.summary || symptomsText}</p></div>
           ${aiAssessment?.first_aid_steps ? `
             <div class="field"><span class="label">First-Aid Guidance Steps:</span>
@@ -484,7 +509,7 @@ export default function PatientAssessmentVisitPage() {
           onClick={() => setActiveTab('assessment')}
           className={`py-3 px-4 font-semibold text-xs border-b-2 flex items-center gap-1.5 transition-colors ${activeTab === 'assessment' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
-          <Bot className="w-4 h-4" /> 4. AI Assessment & Doctor Push
+          <Bot className="w-4 h-4" /> 4. AI Assessment &amp; Doctor Handoff
         </button>
       </div>
 
@@ -517,7 +542,7 @@ export default function PatientAssessmentVisitPage() {
                   className={`absolute bottom-3 right-3 px-3 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-colors ${recording ? 'bg-red-600 text-white animate-pulse' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                 >
                   {recording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                  {recording ? 'Stop Recording' : '🎤 Voice Input'}
+                  {recording ? 'Stop Recording' : 'Record Symptoms by Voice'}
                 </button>
               </div>
             </div>
@@ -548,7 +573,7 @@ export default function PatientAssessmentVisitPage() {
                 onClick={() => setActiveTab('vitals')}
                 className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm flex items-center gap-2 transition-colors"
               >
-                NEXT: RECORD VITALS <ArrowRight className="w-4 h-4" />
+                Next: Record Vitals <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -661,7 +686,7 @@ export default function PatientAssessmentVisitPage() {
               onClick={() => setActiveTab('documents')}
               className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm flex items-center gap-2 transition-colors"
             >
-              NEXT: DOCUMENTS & PHOTOS <ArrowRight className="w-4 h-4" />
+              Next: Upload Documents &amp; Photos <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -747,11 +772,11 @@ export default function PatientAssessmentVisitPage() {
             >
               {loadingAI ? (
                 <>
-                  <RefreshCw className="w-4 h-4 animate-spin" /> RUNNING GROQ AI & RAG PROTOCOL...
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Generating AI assessment...
                 </>
               ) : (
                 <>
-                  <Bot className="w-4 h-4" /> RUN AI ASSESSMENT & RAG PROTOCOL SYSTEM <ArrowRight className="w-4 h-4" />
+                  <Bot className="w-4 h-4" /> Generate AI Assessment <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>
@@ -792,7 +817,7 @@ export default function PatientAssessmentVisitPage() {
                   onClick={generateCompletePDFReport}
                   className="px-5 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm flex items-center gap-2 transition-colors"
                 >
-                  <Printer className="w-4 h-4 text-blue-400" /> 🖨️ GENERATE COMPLETE PDF REPORT
+                  <Printer className="w-4 h-4 text-blue-400" /> Print Visit Report
                 </button>
               </div>
 
@@ -812,7 +837,7 @@ export default function PatientAssessmentVisitPage() {
                 {aiAssessment.first_aid_steps && aiAssessment.first_aid_steps.length > 0 && (
                   <div className="p-4 rounded-lg bg-emerald-50/60 border border-emerald-200 space-y-2">
                     <div className="font-bold text-xs text-emerald-800 flex items-center gap-1.5">
-                      <ShieldCheck className="w-4 h-4 text-emerald-600" /> Immediate First-Aid Action Steps
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" /> First-Aid Steps (perform now)
                     </div>
                     <div className="space-y-1.5 text-xs text-slate-800">
                       {aiAssessment.first_aid_steps.map((step, idx) => (
@@ -825,61 +850,81 @@ export default function PatientAssessmentVisitPage() {
                   </div>
                 )}
 
+                {/* Supportive medication guidance (doctor approval pending) */}
+                {aiAssessment.supportive_medication_guidance && aiAssessment.supportive_medication_guidance.length > 0 && (
+                  <div className="p-4 rounded-lg bg-sky-50/60 border border-sky-200 space-y-2">
+                    <div className="font-bold text-xs text-sky-800 flex items-center gap-1.5">
+                      <Pill className="w-4 h-4 text-sky-600" /> Supportive Medication Guidance — pending doctor approval
+                    </div>
+                    <ul className="space-y-1.5 text-xs text-slate-800 list-disc list-inside">
+                      {aiAssessment.supportive_medication_guidance.map((med, idx) => (
+                        <li key={idx}>{med}</li>
+                      ))}
+                    </ul>
+                    <p className="text-[11px] text-sky-700 font-medium">
+                      This is not a prescription. Do not administer any medicine until the doctor approves it.
+                    </p>
+                  </div>
+                )}
+
+                {/* Warning signs to monitor */}
+                {aiAssessment.warnings && aiAssessment.warnings.length > 0 && (
+                  <div className="p-4 rounded-lg bg-amber-50/70 border border-amber-200 space-y-2">
+                    <div className="font-bold text-xs text-amber-800 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600" /> Warning Signs — escalate immediately if seen
+                    </div>
+                    <ul className="space-y-1 text-xs text-slate-800 list-disc list-inside">
+                      {aiAssessment.warnings.map((w, idx) => (
+                        <li key={idx}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {aiAssessment.legal_disclaimer && (
+                  <p className="text-[11px] text-slate-500 border-t border-slate-200 pt-3">{aiAssessment.legal_disclaimer}</p>
+                )}
+
               </div>
 
               {/* PUSH CASE TO DOCTOR DATABASE & OPTIONAL EMERGENCY VIDEO CALL */}
               <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-4">
                 
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      <Send className="w-5 h-5 text-blue-600" /> Push Clinical Case File to Doctor Portal Database
-                    </h3>
-                    <p className="text-xs text-slate-500">Syncs patient vitals, AI summary, prescription OCR, & wound image to Doctor Database.</p>
-                  </div>
-
-                  {/* Doctor Selector */}
-                  <select
-                    value={selectedDoctor}
-                    onChange={(e) => setSelectedDoctor(e.target.value)}
-                    className="bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none font-semibold cursor-pointer"
-                  >
-                    <option value="Dr. Rajesh Sharma (AIIMS New Delhi)">Dr. Rajesh Sharma (AIIMS New Delhi) - General Physician</option>
-                    <option value="Dr. Ananya Sen (JIPMER Puducherry)">Dr. Ananya Sen (JIPMER Puducherry) - Pediatrician</option>
-                    <option value="Dr. Vikramaditya Rao (PGIMER Chandigarh)">Dr. Vikramaditya Rao (PGIMER Chandigarh) - Cardiologist</option>
-                    <option value="Dr. Meera Nambiar (KEM Hospital Mumbai)">Dr. Meera Nambiar (KEM Hospital Mumbai) - Gynecologist</option>
-                    <option value="Dr. Suresh Patel (BHU Varanasi)">Dr. Suresh Patel (BHU Varanasi) - Pulmonologist</option>
-                  </select>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <Send className="w-5 h-5 text-blue-600" /> Hand Off Case to the Doctor
+                  </h3>
+                  <p className="text-xs text-slate-500">Sends the vitals, AI summary, verified prescription data and wound photos to the doctor's review queue.</p>
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
                   <button
                     onClick={handlePushCaseToDoctor}
                     disabled={pushingToDoctor}
-                    className="w-full sm:w-auto px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
+                    className="w-full sm:w-auto px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
                   >
-                    <Send className="w-4 h-4" /> {pushingToDoctor ? 'Pushing Data to Supabase DB...' : '🚀 PUSH CASE TO DOCTOR DATABASE'}
+                    <Send className="w-4 h-4" /> {pushingToDoctor ? 'Sending case...' : 'Send Case to Doctor Queue'}
                   </button>
 
                   <button
                     onClick={() => setShowScheduleModal(true)}
                     className="w-full sm:w-auto px-5 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
                   >
-                    <Calendar className="w-4 h-4" /> 📅 SCHEDULE TELECONSULTATION CALL
+                    <Calendar className="w-4 h-4" /> Schedule Video Consultation
                   </button>
 
                   <button
                     onClick={handleExplicitStartVideoCall}
-                    className="w-full sm:w-auto px-5 py-3 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
+                    className="w-full sm:w-auto px-5 py-3 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
                   >
-                    <PhoneCall className="w-4 h-4" /> 📹 START EMERGENCY VIDEO CALL (IF SEVERE)
+                    <PhoneCall className="w-4 h-4" /> Start Emergency Video Call
                   </button>
                 </div>
 
                 {pushSuccess && (
                   <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-semibold flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    Case File Pushed Successfully! The Doctor can now view the wound photos, OCR prescription, and AI summary on their dashboard.
+                    Case sent. The doctor can now review the AI summary, verified prescription data and wound photos in their queue.
                   </div>
                 )}
               </div>
@@ -888,7 +933,7 @@ export default function PatientAssessmentVisitPage() {
           ) : (
             <div className="bg-white p-12 rounded-lg border border-dashed border-slate-200 text-center text-xs text-slate-500 space-y-3">
               <Bot className="w-8 h-8 text-blue-600 mx-auto" />
-              <p>Click "RUN AI ASSESSMENT & RAG PROTOCOL SYSTEM" to generate AI triage synthesis.</p>
+              <p>Complete the previous steps, then select "Generate AI Assessment" on the Documents &amp; Photos tab.</p>
             </div>
           )}
 
@@ -923,9 +968,9 @@ export default function PatientAssessmentVisitPage() {
         <WebRTCVideoCallModal
           roomId={activeVideoRoom.room_id}
           userName={activeVideoRoom.user_name || 'Sunita Devi (Clinical Assistant)'}
-          userId={`ast_${Date.now()}`}
+          userId={user?.id || `ast_${Date.now()}`}
           role="CLINIC_ASSISTANT"
-          peerName={selectedDoctor}
+          peerName="Doctor"
           onClose={() => setActiveVideoRoom(null)}
         />
       )}

@@ -115,18 +115,17 @@ export const analyzePatientCase = async (req, res) => {
       }
     } catch (e) {}
 
+    // Attach stored wound photos (public URLs). Their vision analysis arrives
+    // via the vision_observation request field, since the live patient_images
+    // table stores only the file reference.
+    let storedImages = [];
     try {
       const { data: images } = await supabaseAdmin.from('patient_images').select('*').eq('visit_id', visit_id);
       if (images && images.length > 0) {
-        const dbImgs = images.map(img => ({
-          image_type: img.image_type || 'INJURY',
-          image_url: img.image_url,
-          computer_vision_analysis: img.computer_vision_analysis,
-          observable_features: img.observable_features,
-          cautious_summary: img.cautious_summary || 'Visible skin redness/swelling observed. Recommended doctor evaluation.',
-          warnings: img.warnings
-        }));
-        imageObservations = [...imageObservations, ...dbImgs];
+        storedImages = images.map((img) => {
+          const { data: pub } = supabaseAdmin.storage.from(img.storage_bucket).getPublicUrl(img.storage_path);
+          return { image_type: img.image_type, image_url: pub?.publicUrl || null, uploaded_at: img.uploaded_at };
+        });
       }
     } catch (e) {}
 
@@ -139,50 +138,90 @@ export const analyzePatientCase = async (req, res) => {
       imageObservations: imageObservations
     });
 
-    const rawRisk = (aiResult.risk_level || 'medium').toLowerCase();
-    const safeRiskEnum = ['low', 'medium', 'high'].includes(rawRisk) ? rawRisk : (rawRisk === 'emergency' ? 'high' : 'medium');
+    // HIGH / MEDIUM / LOW -> DB risk_level enum (high / medium / low)
+    const safeRiskEnum = { HIGH: 'high', MEDIUM: 'medium', LOW: 'low' }[aiResult.risk_level] || 'medium';
+
+    // Attach stored image URLs to the raw output the doctor portal reads
+    aiResult.stored_images = storedImages;
 
     const aiAssessmentRecord = {
       visit_id: visit_id,
-      model_provider: 'Groq',
-      model_name: 'llama-3.3-70b-versatile',
+      model_provider: aiResult.generated_by === 'groq-llama-3.3-70b' ? 'Groq' : 'RuleEngine',
+      model_name: aiResult.generated_by || 'rule-engine-fallback',
       processing_status: 'completed',
       patient_summary: aiResult.patient_summary || 'Patient Assessment Summary',
-      preliminary_assessment: aiResult.patient_summary || 'Preliminary clinical review',
-      identified_symptoms: aiResult.identified_symptoms || [],
-      identified_risk_factors: aiResult.identified_risk_factors || [],
+      preliminary_assessment: aiResult.risk_reasoning || 'Preliminary clinical review',
+      identified_symptoms: aiResult.key_symptoms || [],
+      identified_risk_factors: aiResult.important_history || [],
       red_flags: aiResult.warnings || [],
-      uncertainty_notes: aiResult.uncertainty_notes || 'Clinical protocol evaluation',
-      ai_raw_output: aiResult
+      uncertainty_notes: (aiResult.missing_information || []).join('; ') || 'None noted',
+      ai_raw_output: aiResult,
+      completed_at: new Date().toISOString()
     };
 
-    let savedAssessmentId = `ai_${Date.now()}`;
-    try {
-      const { data: saved } = await supabaseAdmin.from('ai_assessments').insert([aiAssessmentRecord]).select().single();
-      if (saved?.id) savedAssessmentId = saved.id;
-    } catch (e) {
-      console.warn('AI assessment DB insert fallback used:', e.message);
+    let savedAssessmentId = null;
+    const { data: saved, error: assessErr } = await supabaseAdmin
+      .from('ai_assessments')
+      .insert([aiAssessmentRecord])
+      .select()
+      .single();
+    if (assessErr) {
+      console.error('ai_assessments insert FAILED:', assessErr.message);
+    } else {
+      savedAssessmentId = saved.id;
     }
 
-    try {
-      if (savedAssessmentId && !savedAssessmentId.startsWith('ai_')) {
-        await supabaseAdmin.from('ai_risk_assessments').insert([{
-          ai_assessment_id: savedAssessmentId,
-          risk_level: safeRiskEnum,
-          reason: aiResult.warnings?.join(' ') || 'Clinical protocol evaluation',
-          red_flags: aiResult.warnings || [],
-          recommended_action: aiResult.recommended_action || 'Doctor Consultation'
-        }]);
-      }
-    } catch (e) {}
-
-    try {
-      await supabaseAdmin.from('visits').update({
-        status: 'awaiting_doctor',
+    if (savedAssessmentId) {
+      // Risk record
+      const { error: riskErr } = await supabaseAdmin.from('ai_risk_assessments').insert([{
+        ai_assessment_id: savedAssessmentId,
         risk_level: safeRiskEnum,
-        risk_reason: aiResult.warnings?.join(' ') || 'AI protocol triage'
-      }).eq('id', visit_id);
-    } catch (e) {}
+        reason: aiResult.risk_reasoning || 'Clinical protocol evaluation',
+        red_flags: aiResult.warnings || [],
+        recommended_action: aiResult.recommended_next_action || 'DOCTOR_REVIEW'
+      }]);
+      if (riskErr) console.warn('ai_risk_assessments insert failed:', riskErr.message);
+
+      // Individual recommendations for doctor approval workflow
+      const recRows = [
+        ...(aiResult.first_aid_steps || []).map((step, i) => ({
+          ai_assessment_id: savedAssessmentId,
+          recommendation_type: 'first_aid',
+          title: `First-aid step ${i + 1}`,
+          recommendation: step,
+          status: 'ai_suggested'
+        })),
+        ...(aiResult.supportive_medication_guidance || []).map((med, i) => ({
+          ai_assessment_id: savedAssessmentId,
+          recommendation_type: 'medicine',
+          title: `Supportive medication ${i + 1}`,
+          recommendation: med,
+          safety_warning: 'Subject to doctor approval. Not a prescription.',
+          status: 'ai_suggested'
+        }))
+      ];
+      if (aiResult.immediate_referral) {
+        recRows.push({
+          ai_assessment_id: savedAssessmentId,
+          recommendation_type: 'referral',
+          title: 'Emergency hospital referral',
+          recommendation: 'Life-threatening red flags detected. Arrange emergency ambulance transfer to the district hospital.',
+          safety_warning: 'Time-critical. Alert the on-call doctor immediately.',
+          status: 'ai_suggested'
+        });
+      }
+      if (recRows.length > 0) {
+        const { error: recErr } = await supabaseAdmin.from('ai_recommendations').insert(recRows);
+        if (recErr) console.warn('ai_recommendations insert failed:', recErr.message);
+      }
+    }
+
+    const { error: visitErr } = await supabaseAdmin.from('visits').update({
+      status: 'awaiting_doctor',
+      risk_level: safeRiskEnum,
+      risk_reason: aiResult.risk_reasoning || 'AI protocol triage'
+    }).eq('id', visit_id);
+    if (visitErr) console.warn('visits risk update failed:', visitErr.message);
 
     logAuditEvent({
       actorId: req.user?.id,
@@ -195,6 +234,7 @@ export const analyzePatientCase = async (req, res) => {
 
     return res.json({
       assessment_id: savedAssessmentId,
+      persisted: Boolean(savedAssessmentId),
       visit_id,
       ...aiResult
     });
@@ -242,24 +282,17 @@ export const analyzeImageAI = async (req, res) => {
         console.warn('Supabase Storage injury-photos upload warning:', stgErr.message);
       }
 
-      // Persist full Computer Vision observation structure into `patient_images` table
-      try {
-        await supabaseAdmin.from('patient_images').insert([{
-          patient_id,
-          visit_id: visit_id || null,
-          storage_bucket: 'injury-photos',
-          storage_path: storagePath,
-          image_type: 'INJURY',
-          mime_type: file.mimetype,
-          image_url: finalImageUrl || observation.image_url,
-          cautious_summary: observation.cautious_summary,
-          computer_vision_analysis: observation.computer_vision_analysis,
-          observable_features: observation.observable_features,
-          warnings: observation.warnings
-        }]);
-      } catch (e) {
-        console.warn('patient_images DB insert fallback used:', e.message);
-      }
+      // Persist the file reference (live schema stores only file metadata;
+      // the vision analysis JSON travels with the AI assessment record)
+      const { error: imgErr } = await supabaseAdmin.from('patient_images').insert([{
+        patient_id,
+        visit_id: visit_id || null,
+        storage_bucket: 'injury-photos',
+        storage_path: storagePath,
+        image_type: 'INJURY',
+        mime_type: file.mimetype
+      }]);
+      if (imgErr) console.warn('patient_images insert failed:', imgErr.message);
     }
 
     return res.json({

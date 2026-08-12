@@ -3,17 +3,43 @@ import { PhoneOff, Mic, MicOff, Video, VideoOff, Wifi, AlertTriangle, ShieldChec
 
 /**
  * Custom Pure WebRTC Video Call Component
- * Connects directly to backend raw WebSocket signaling server (ws://localhost:5000/signal)
- * Uses native browser RTCPeerConnection with Google STUN servers.
+ * Connects to the backend raw WebSocket signaling server on /signal
+ * (proxied through Vite in dev) and uses native RTCPeerConnection.
+ *
+ * The server elects exactly one initiator per room (the second joiner),
+ * which eliminates SDP offer glare.
  */
 
-const STUN_SERVERS = {
-  iceServers: [
+function buildIceConfig() {
+  const iceServers = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' }
-  ]
-};
+  ];
+
+  // Optional TURN relay (required for calls across restrictive NATs/networks)
+  const turnUrl = import.meta.env.VITE_TURN_URL;
+  if (turnUrl) {
+    iceServers.push({
+      urls: turnUrl,
+      username: import.meta.env.VITE_TURN_USERNAME || '',
+      credential: import.meta.env.VITE_TURN_CREDENTIAL || ''
+    });
+  }
+
+  return { iceServers };
+}
+
+function buildSignalUrl(roomId, role, userId) {
+  const params = `roomId=${encodeURIComponent(roomId)}&role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId)}`;
+  const override = import.meta.env.VITE_SIGNAL_URL; // e.g. wss://api.example.com/signal
+  if (override) return `${override}?${params}`;
+
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}/signal?${params}`;
+}
+
+const MAX_RECONNECT_ATTEMPTS = 5;
 
 export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 'CLINIC_ASSISTANT', peerName = 'Remote Participant', onClose }) {
   const [signalState, setSignalState] = useState('CONNECTING'); // CONNECTING | CONNECTED | RECONNECTING | DISCONNECTED
@@ -29,72 +55,81 @@ export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
   const iceCandidateBufferRef = useRef([]);
+  const isInitiatorRef = useRef(false);
+  const closedByUserRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
+    closedByUserRef.current = false;
+    reconnectAttemptsRef.current = 0;
+
+    function connectSignaling() {
+      const wsUrl = buildSignalUrl(roomId, role, userId);
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (!isMounted) return;
+        console.log(`🔌 Connected to Signaling Server on ${wsUrl}`);
+        reconnectAttemptsRef.current = 0;
+        setSignalState('CONNECTED');
+        ws.send(JSON.stringify({ type: 'join-room', roomId, role, userId }));
+      };
+
+      ws.onmessage = async (event) => {
+        if (!isMounted) return;
+        try {
+          const data = JSON.parse(event.data);
+          await handleIncomingSignalingMessage(data);
+        } catch (err) {
+          console.error('Signal parse error:', err);
+        }
+      };
+
+      ws.onclose = () => {
+        if (!isMounted || closedByUserRef.current) return;
+        console.warn('🔌 Signaling WebSocket Disconnected');
+
+        if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+          setSignalState('DISCONNECTED');
+          setCallEndedReason('Lost connection to the signaling server.');
+          return;
+        }
+
+        setSignalState('RECONNECTING');
+        const delay = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 10000);
+        reconnectAttemptsRef.current += 1;
+        console.log(`🔄 Reconnecting WebSocket in ${delay}ms (attempt ${reconnectAttemptsRef.current})...`);
+        reconnectTimerRef.current = setTimeout(() => {
+          if (isMounted && !closedByUserRef.current) connectSignaling();
+        }, delay);
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket Error:', err);
+        // onclose fires right after onerror and drives reconnection.
+      };
+    }
 
     async function initWebRTC() {
       try {
-        // 1. Get Local Media Stream
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-        localStreamRef.current = stream;
 
-        if (localVideoRef.current && isMounted) {
+        // Component unmounted while the permission prompt was open —
+        // release the camera/mic immediately.
+        if (!isMounted) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        localStreamRef.current = stream;
+        if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
 
-        // 2. Connect to Raw WebSocket Signaling Server
-        const wsUrl = `ws://${window.location.hostname}:5000/signal?roomId=${encodeURIComponent(roomId)}&role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId)}`;
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          if (!isMounted) return;
-          console.log(`🔌 Connected to Signaling Server on ${wsUrl}`);
-          setSignalState('CONNECTED');
-
-          // Send join-room payload
-          ws.send(JSON.stringify({
-            type: 'join-room',
-            roomId,
-            role,
-            userId
-          }));
-        };
-
-        ws.onmessage = async (event) => {
-          if (!isMounted) return;
-          try {
-            const data = JSON.parse(event.data);
-            handleIncomingSignalingMessage(data);
-          } catch (err) {
-            console.error('Signal parse error:', err);
-          }
-        };
-
-        ws.onclose = () => {
-          if (!isMounted) return;
-          console.warn('🔌 Signaling WebSocket Disconnected');
-          setSignalState('RECONNECTING');
-          
-          // Reconnect grace period attempt after 3s
-          setTimeout(() => {
-            if (isMounted && (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED)) {
-              console.log('🔄 Attempting WebSocket Reconnection...');
-              initWebRTC();
-            }
-          }, 3000);
-        };
-
-        ws.onerror = (err) => {
-          if (!isMounted) return;
-          console.error('WebSocket Error:', err);
-          setSignalState('DISCONNECTED');
-        };
-
-        // 3. Initialize RTCPeerConnection
-        createPeerConnection();
-
+        connectSignaling();
       } catch (mediaErr) {
         console.error('Media stream error:', mediaErr);
         if (isMounted) setCallEndedReason('Camera/Microphone permission denied or device missing');
@@ -109,20 +144,26 @@ export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 
     };
   }, [roomId]);
 
+  // Always builds a FRESH RTCPeerConnection, closing any previous one, so
+  // every (re)negotiation starts from a clean state.
   function createPeerConnection() {
-    if (pcRef.current) return pcRef.current;
+    if (pcRef.current) {
+      pcRef.current.onicecandidate = null;
+      pcRef.current.ontrack = null;
+      pcRef.current.onconnectionstatechange = null;
+      pcRef.current.close();
+    }
+    iceCandidateBufferRef.current = [];
 
-    const pc = new RTCPeerConnection(STUN_SERVERS);
+    const pc = new RTCPeerConnection(buildIceConfig());
     pcRef.current = pc;
 
-    // Attach local stream tracks to Peer Connection
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
         pc.addTrack(track, localStreamRef.current);
       });
     }
 
-    // Remote Track Listener
     pc.ontrack = (event) => {
       console.log('🎥 Remote track received:', event.streams);
       if (remoteVideoRef.current && event.streams[0]) {
@@ -130,56 +171,77 @@ export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 
       }
     };
 
-    // ICE Candidate Listener
     pc.onicecandidate = (event) => {
-      if (event.candidate && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: 'ice-candidate',
-          roomId,
-          candidate: event.candidate
-        }));
+      if (event.candidate) {
+        sendSignal({ type: 'ice-candidate', roomId, candidate: event.candidate });
       }
     };
 
-    // Connection State Listener
     pc.onconnectionstatechange = () => {
       console.log(`📡 WebRTC PeerConnection State: ${pc.connectionState}`);
       setPeerConnState(pc.connectionState.toUpperCase());
 
       if (pc.connectionState === 'connected') {
         setCallEndedReason(null);
-      } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        setCallEndedReason('Media connection lost or peer disconnected.');
+      } else if (pc.connectionState === 'failed') {
+        // Try to recover with an ICE restart before giving up.
+        if (isInitiatorRef.current) {
+          console.warn('⚠️ Connection failed — attempting ICE restart...');
+          makeOffer({ iceRestart: true });
+        } else {
+          setCallEndedReason('Media connection lost. Waiting for peer to reconnect...');
+        }
+      } else if (pc.connectionState === 'disconnected') {
+        setCallEndedReason('Media connection interrupted. Attempting to recover...');
       }
     };
 
     return pc;
   }
 
-  async function handleIncomingSignalingMessage(data) {
-    const pc = pcRef.current || createPeerConnection();
+  function sendSignal(payload) {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(payload));
+    }
+  }
 
+  async function makeOffer({ iceRestart = false } = {}) {
+    const pc = pcRef.current;
+    if (!pc) return;
+    try {
+      const offer = await pc.createOffer(iceRestart ? { iceRestart: true } : undefined);
+      await pc.setLocalDescription(offer);
+      sendSignal({ type: 'offer', roomId, sdp: offer });
+    } catch (err) {
+      console.error('Failed to create offer:', err);
+    }
+  }
+
+  async function setRemoteAndFlushCandidates(pc, sdp) {
+    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    while (iceCandidateBufferRef.current.length > 0) {
+      const cand = iceCandidateBufferRef.current.shift();
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (err) {
+        console.error('Error adding buffered ICE candidate:', err);
+      }
+    }
+  }
+
+  async function handleIncomingSignalingMessage(data) {
     switch (data.type) {
       case 'peer-joined': {
-        console.log(`👤 Peer Joined: ${data.userId} (${data.role})`);
+        console.log(`👤 Peer Joined: ${data.userId} (${data.role}) — initiator: ${data.initiator}`);
         setPeerJoined(true);
+        setCallEndedReason(null);
 
-        // If Doctor / Initiator role, create and send SDP Offer
-        if (role === 'DOCTOR' || role === 'CLINIC_ASSISTANT') {
-          try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              wsRef.current.send(JSON.stringify({
-                type: 'offer',
-                roomId,
-                sdp: offer
-              }));
-            }
-          } catch (err) {
-            console.error('Failed to create offer:', err);
-          }
+        // The server elects exactly one initiator per pairing. Both sides
+        // rebuild their peer connection so rejoins renegotiate cleanly.
+        isInitiatorRef.current = !!data.initiator;
+        createPeerConnection();
+        if (data.initiator) {
+          await makeOffer();
         }
         break;
       }
@@ -187,24 +249,12 @@ export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 
       case 'offer': {
         console.log('📩 SDP Offer received');
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-
-          // Flush any buffered ICE candidates
-          while (iceCandidateBufferRef.current.length > 0) {
-            const cand = iceCandidateBufferRef.current.shift();
-            await pc.addIceCandidate(new RTCIceCandidate(cand));
-          }
+          const pc = pcRef.current || createPeerConnection();
+          await setRemoteAndFlushCandidates(pc, data.sdp);
 
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-              type: 'answer',
-              roomId,
-              sdp: answer
-            }));
-          }
+          sendSignal({ type: 'answer', roomId, sdp: answer });
         } catch (err) {
           console.error('Failed to handle offer:', err);
         }
@@ -214,7 +264,8 @@ export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 
       case 'answer': {
         console.log('📩 SDP Answer received');
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          const pc = pcRef.current;
+          if (pc) await setRemoteAndFlushCandidates(pc, data.sdp);
         } catch (err) {
           console.error('Failed to set remote description from answer:', err);
         }
@@ -222,16 +273,16 @@ export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 
       }
 
       case 'ice-candidate': {
-        if (data.candidate) {
-          try {
-            if (pc.remoteDescription) {
-              await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-            } else {
-              iceCandidateBufferRef.current.push(data.candidate);
-            }
-          } catch (err) {
-            console.error('Error adding ICE candidate:', err);
+        if (!data.candidate) break;
+        const pc = pcRef.current;
+        try {
+          if (pc && pc.remoteDescription) {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          } else {
+            iceCandidateBufferRef.current.push(data.candidate);
           }
+        } catch (err) {
+          console.error('Error adding ICE candidate:', err);
         }
         break;
       }
@@ -240,6 +291,21 @@ export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 
         console.warn(`👋 Peer left call: ${data.userId}`);
         setPeerJoined(false);
         setCallEndedReason(data.reason === 'DISCONNECTED' ? 'Peer connection lost unexpectedly.' : 'Peer left the video call.');
+
+        // Tear down media state so a rejoining peer gets a fresh negotiation.
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+        if (pcRef.current) {
+          pcRef.current.close();
+          pcRef.current = null;
+        }
+        iceCandidateBufferRef.current = [];
+        setPeerConnState('NEW');
+        break;
+      }
+
+      case 'error': {
+        console.error('Signaling server error:', data.message);
+        setCallEndedReason(data.message);
         break;
       }
 
@@ -269,9 +335,18 @@ export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 
   }
 
   function cleanupCall() {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'leave-room', roomId }));
+    closedByUserRef.current = true;
+
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'leave-room', roomId }));
+      }
       wsRef.current.close();
+      wsRef.current = null;
     }
     if (pcRef.current) {
       pcRef.current.close();
@@ -279,6 +354,7 @@ export default function WebRTCVideoCallModal({ roomId, userName, userId, role = 
     }
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
     }
   }
 

@@ -229,7 +229,7 @@ export default function PatientRegistrationPage() {
           disabled={loading}
           className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm transition-colors flex items-center justify-center gap-2"
         >
-          <CheckCircle2 className="w-4 h-4" /> {loading ? 'Saving Patient Record...' : 'REGISTER PATIENT & START CLINICAL VISIT'}
+          <CheckCircle2 className="w-4 h-4" /> {loading ? 'Saving patient record...' : 'Register Patient & Start Assessment'}
         </button>
 
       </form>

@@ -1,101 +1,95 @@
-import { groq } from '../config/groq.js';
+import { geminiGenerateJson } from '../config/gemini.js';
 
 /**
- * Detailed Computer Vision Assessment for Wounds and Clinical Photos
+ * Computer Vision Assessment for Wounds and Clinical Photos.
+ *
+ * Engine: Gemini 2.5 Flash multimodal (the configured Groq key exposes no
+ * vision models).
+ *
+ * SAFETY: output is observational only — never diagnostic. If the engine is
+ * unavailable, the photo is stored and flagged for direct doctor review;
+ * no visual findings are invented.
  */
-export const analyzeInjuryImage = async (imageBuffer, mimeType = 'image/jpeg') => {
-  try {
-    console.log('🖼️ Running Computer Vision API for Clinical Wound Analysis...');
 
-    const base64Data = imageBuffer ? imageBuffer.toString('base64') : '';
-    const imageUrl = base64Data ? `data:${mimeType};base64,${base64Data}` : null;
+const VISION_SYSTEM_PROMPT = `You are an AI medical computer-vision assistant for rural health clinics in India.
+Perform a detailed OBSERVATIONAL assessment of the uploaded wound/injury/skin photograph.
 
-    // Default Computer Vision observation structure complying with clinical safety rules
-    let visionAnalysis = {
-      image_type: 'Wound / Clinical Surface Photo',
-      image_url: imageUrl,
-      computer_vision_analysis: {
-        tissue_margin: 'Localized peripheral redness (erythema) extending around skin boundary',
-        surface_features: 'Subtle surface edema and localized tissue swelling observed in frame',
-        exudate_observation: 'No active profuse hemorrhage or gross purulent exudate detected'
-      },
-      observable_features: [
-        'Erythematous skin margin localized to affected anatomical region.',
-        'Mild tissue swelling and superficial skin disruption observed.',
-        'Intact surrounding skin barrier with no visible necrotic dark margins.'
-      ],
-      cautious_summary: 'Detailed Computer Vision Analysis: Visible localized redness (erythema) and mild tissue swelling observed in captured frame. Non-diagnostic observational summary prepared for doctor review.',
-      warnings: [
-        'Computer Vision observation is non-diagnostic and does NOT establish cellulitis, abscess, or deep tissue necrosis.',
-        'If pain rapidly worsens, skin turns dark/blue, or active bleeding occurs, escalate immediately.'
-      ]
-    };
+STRICT SAFETY RULES:
+- Use cautious, observational language only. Never state a definitive diagnosis (no "cellulitis", "abscess", "infection" as conclusions — describing visible redness or discharge is fine).
+- Describe only what is actually visible in the image. Never invent features.
+- If the image is not a wound/clinical photo or is unreadable, say so in cautious_summary and set analysis_possible to false.
 
-    // Supported multimodal vision models on Groq
-    if (groq && base64Data) {
-      const visionModels = [
-        'llama-3.2-11b-vision-instruct',
-        'meta-llama/llama-3.2-11b-vision-instruct',
-        'llama-3.2-90b-vision-instruct'
-      ];
-
-      for (const model of visionModels) {
-        try {
-          console.log(`👁️ Calling Groq Computer Vision Model: ${model}...`);
-          const response = await groq.chat.completions.create({
-            model: model,
-            temperature: 0.1,
-            response_format: { type: 'json_object' },
-            messages: [
-              {
-                role: 'system',
-                content: `You are an expert AI Medical Computer Vision System for rural health clinics. Perform a detailed computer vision assessment of the uploaded wound/injury photo. STRICT SAFETY RULE: Use CAUTIOUS, OBSERVATIONAL LANGUAGE ONLY. NEVER state a definitive diagnosis. Describe visual features: tissue margin erythema, surface swelling, skin barrier disruption, exudate.
-Return strictly JSON with keys:
+Return strictly a JSON object:
 {
+  "analysis_possible": true,
   "image_type": "Wound / Skin Observation",
   "computer_vision_analysis": {
-    "tissue_margin": "Detailed description of redness and margin around wound",
-    "surface_features": "Description of swelling, lesion type, abrasion, or tissue surface",
-    "exudate_observation": "Observation regarding bleeding, discharge, or moisture"
+    "tissue_margin": "Observation of the wound edge and surrounding skin colour",
+    "surface_features": "Observation of swelling, lesion type, abrasion, tissue surface",
+    "exudate_observation": "Observation of bleeding, discharge, or moisture",
+    "size_estimate": "Approximate visible size relative to anatomy, or Unknown"
   },
-  "observable_features": ["Feature 1", "Feature 2", "Feature 3"],
-  "cautious_summary": "Comprehensive cautious computer vision summary for doctor review",
-  "warnings": ["Safety warning for clinical assistant"]
-}`
-              },
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: 'Analyze this clinical wound / injury photograph using your computer vision capabilities.' },
-                  { type: 'image_url', image_url: { url: imageUrl } }
-                ]
-              }
-            ]
-          });
+  "observable_features": ["Visible feature 1", "Visible feature 2"],
+  "cautious_summary": "Cautious observational summary for the reviewing doctor",
+  "severity_impression": "LOW" | "MEDIUM" | "HIGH",
+  "warnings": ["Safety warning for the clinic assistant, e.g. escalation triggers"]
+}
 
-          const parsed = JSON.parse(response.choices[0].message.content);
-          if (parsed && parsed.cautious_summary) {
-            console.log(`✅ Computer Vision Analysis generated successfully via ${model}!`);
-            return {
-              ...parsed,
-              image_url: imageUrl
-            };
-          }
-        } catch (modelErr) {
-          console.warn(`Vision model ${model} unavailable, using rule-based computer vision observation.`);
-        }
-      }
-    }
+severity_impression guidance (observational, not diagnostic):
+- HIGH: active heavy bleeding, dark/black tissue, deep exposed tissue, rapidly spreading redness
+- MEDIUM: pus-like discharge, notable swelling with spreading redness, large affected area
+- LOW: superficial abrasion, small cut, mild localized redness`;
 
-    return visionAnalysis;
-  } catch (error) {
-    console.error('Vision analysis error:', error.message);
+export const analyzeInjuryImage = async (imageBuffer, mimeType = 'image/jpeg') => {
+  if (!imageBuffer) {
+    return analysisUnavailable(null, 'No image data was received.');
+  }
+
+  const base64Data = imageBuffer.toString('base64');
+  const imageUrl = `data:${mimeType};base64,${base64Data}`;
+
+  console.log('🖼️ Running Gemini computer-vision wound analysis...');
+  const parsed = await geminiGenerateJson(
+    VISION_SYSTEM_PROMPT,
+    'Analyze this clinical wound / injury photograph and return the observational JSON.',
+    { base64: base64Data, mimeType }
+  );
+
+  if (parsed && parsed.cautious_summary) {
+    console.log('✅ Gemini vision analysis complete.');
     return {
-      image_type: 'Wound Photograph',
-      image_url: imageBuffer ? `data:${mimeType};base64,${imageBuffer.toString('base64')}` : null,
-      cautious_summary: 'Wound photograph captured. Visual surface characteristics logged for doctor review.',
-      observable_features: ['Clinical wound photograph uploaded'],
-      warnings: ['Image viewable by Doctor during remote consultation.']
+      analysis_possible: parsed.analysis_possible !== false,
+      image_type: parsed.image_type || 'Wound / Skin Observation',
+      image_url: imageUrl,
+      computer_vision_analysis: parsed.computer_vision_analysis || {},
+      observable_features: Array.isArray(parsed.observable_features) ? parsed.observable_features : [],
+      cautious_summary: parsed.cautious_summary,
+      severity_impression: ['LOW', 'MEDIUM', 'HIGH'].includes(parsed.severity_impression) ? parsed.severity_impression : 'MEDIUM',
+      warnings: [
+        ...(Array.isArray(parsed.warnings) ? parsed.warnings : []),
+        'This computer-vision observation is non-diagnostic. Final clinical judgement rests with the reviewing doctor.'
+      ],
+      engine: 'gemini-2.5-flash'
     };
   }
+
+  return analysisUnavailable(imageUrl, 'Automated image analysis was unavailable for this photo.');
 };
+
+function analysisUnavailable(imageUrl, reason) {
+  console.warn(`⚠️ Vision analysis unavailable: ${reason}`);
+  return {
+    analysis_possible: false,
+    image_type: 'Clinical Photograph',
+    image_url: imageUrl,
+    computer_vision_analysis: {},
+    observable_features: [],
+    cautious_summary: `${reason} The photograph has been saved and flagged for direct doctor review — no automated visual findings were generated.`,
+    severity_impression: 'MEDIUM',
+    warnings: [
+      'Automated analysis unavailable — the doctor must review this photograph directly.',
+      'If pain rapidly worsens, skin darkens, or active bleeding occurs, escalate immediately.'
+    ],
+    engine: 'none'
+  };
+}
