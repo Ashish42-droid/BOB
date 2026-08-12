@@ -4,6 +4,9 @@
   "description": "Backend API for Virtual Village Clinic AI Platform",
   "main": "src/server.js",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
