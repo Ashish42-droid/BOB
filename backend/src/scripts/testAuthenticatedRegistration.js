@@ -3,7 +3,7 @@ import fetch from 'node-fetch';
 async function testAuthRegistration() {
   console.log('🔑 1. Logging in as Clinic Assistant (assistant@clinic.org)...');
 
-  const loginRes = await fetch('http://localhost:5000/api/auth/login', {
+  const loginRes = await fetch('http://172.17.11.68:5000/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'assistant@clinic.org', role: 'CLINIC_ASSISTANT' })
