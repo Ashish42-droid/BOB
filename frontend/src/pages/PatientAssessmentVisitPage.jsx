@@ -65,6 +65,16 @@ export default function PatientAssessmentVisitPage() {
     fetchPatientAndVisit();
   }, [patientId]);
 
+  const formatApiError = (err, defaultMsg) => {
+    if (err.response) {
+      const status = err.response.status;
+      const url = err.response.config?.url || 'API';
+      const serverErr = err.response.data?.error || err.response.data?.details || err.response.statusText;
+      return `[HTTP ${status} on ${url}]: ${serverErr}`;
+    }
+    return `${defaultMsg}: ${err.message}`;
+  };
+
   const fetchPatientAndVisit = async () => {
     try {
       const pRes = await api.get(`/patients/${patientId}`);
@@ -207,7 +217,7 @@ export default function PatientAssessmentVisitPage() {
       setCurrentDocument(res.data);
       setShowOCRModal(true);
     } catch (err) {
-      alert('Document upload failed: ' + (err.response?.data?.error || err.message));
+      alert(formatApiError(err, 'Document upload failed'));
     } finally {
       setUploadingDoc(false);
     }
@@ -232,7 +242,7 @@ export default function PatientAssessmentVisitPage() {
       setVisionObservation(res.data);
       alert('Computer Vision analysis complete! Surface features & wound observations attached to case file.');
     } catch (err) {
-      alert('Vision image upload failed: ' + (err.response?.data?.error || err.message));
+      alert(formatApiError(err, 'Vision image upload failed'));
     } finally {
       setUploadingImage(false);
     }
@@ -261,7 +271,7 @@ export default function PatientAssessmentVisitPage() {
       setAiAssessment(res.data);
       setActiveTab('assessment');
     } catch (err) {
-      alert('AI Assessment failed: ' + (err.response?.data?.error || err.message));
+      alert(formatApiError(err, 'AI Assessment failed'));
     } finally {
       setAnalyzing(false);
     }
@@ -290,7 +300,7 @@ export default function PatientAssessmentVisitPage() {
       setPushSuccess(true);
       alert(`🎉 Patient case successfully pushed to ${selectedDoctor}'s queue! Real-time clinical summary & wound images are now available on the Doctor Portal.`);
     } catch (err) {
-      alert('Failed to push case to doctor portal: ' + (err.response?.data?.error || err.message));
+      alert(formatApiError(err, 'Failed to push case to doctor portal'));
     } finally {
       setPushingToDoctor(false);
     }
@@ -309,7 +319,7 @@ export default function PatientAssessmentVisitPage() {
     }
   };
 
-  // COMPLETE PDF GENERATOR REPORT FUNCTION (Includes all 5 required sections in exact order)
+  // COMPLETE PDF GENERATOR REPORT FUNCTION
   const generateCompletePDFReport = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {

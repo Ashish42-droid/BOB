@@ -9,6 +9,8 @@ import aiRoutes from './routes/ai.routes.js';
 import doctorRoutes from './routes/doctor.routes.js';
 import consultationRoutes from './routes/consultation.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import visionRoutes from './routes/vision.routes.js';
+import voiceRoutes from './routes/voice.routes.js';
 
 const app = express();
 
@@ -27,6 +29,8 @@ app.get(['/', '/api'], (req, res) => {
       patients: '/api/patients',
       visits: '/api/visits',
       ai: '/api/ai',
+      vision: '/api/vision',
+      voice: '/api/voice',
       doctor: '/api/doctor',
       consultations: '/api/consultations'
     }
@@ -49,6 +53,8 @@ app.use('/api/patients', patientRoutes);
 app.use('/api/visits', visitRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/vision', visionRoutes);
+app.use('/api/voice', voiceRoutes);
 app.use('/api/doctor', doctorRoutes);
 app.use('/api/consultations', consultationRoutes);
 app.use('/api/admin', adminRoutes);
