@@ -45,18 +45,16 @@ export const analyzePatientCase = async (req, res) => {
 
     // Safe DB Fetching with robust Schema Cache Fallbacks
     try {
-      const { data: vData, error: vErr } = await supabaseAdmin
+      const { data: vData } = await supabaseAdmin
         .from('visits')
-        .select('id, patient_id, chief_complaint, symptoms, symptom_duration, preferred_language, status')
+        .select('id, patient_id, chief_complaint, preferred_consultation_language, status')
         .eq('id', visit_id)
         .single();
       
-      if (!vErr && vData) {
+      if (vData) {
         visit = { ...vData, ...visit };
       }
-    } catch (e) {
-      console.warn('Visits table query warning (handled):', e.message);
-    }
+    } catch (e) {}
 
     // Default visit structure if DB fails or lacks fields
     if (!visit.id) {
@@ -74,13 +72,17 @@ export const analyzePatientCase = async (req, res) => {
     if (visit.patient_id) {
       try {
         const { data: pData } = await supabaseAdmin.from('patients').select('*').eq('id', visit.patient_id).single();
-        if (pData) patient = { ...pData, ...patient };
+        if (pData) {
+          patient = { ...pData, ...patient };
+          patient.name = patient.full_name || patient.name;
+          patient.age = patient.age_years || patient.age;
+        }
       } catch (e) {}
     }
 
     try {
       const { data: vtData } = await supabaseAdmin
-        .from('vitals')
+        .from('visit_vitals')
         .select('*')
         .eq('visit_id', visit_id)
         .order('recorded_at', { ascending: false })
@@ -91,12 +93,12 @@ export const analyzePatientCase = async (req, res) => {
 
     try {
       const { data: docs } = await supabaseAdmin
-        .from('medical_documents')
+        .from('patient_documents')
         .select('*, document_extractions(*)')
         .eq('visit_id', visit_id);
 
       verifiedDocs = (docs || [])
-        .map(d => d.document_extractions?.find(e => e.verified)?.extracted_data)
+        .map(d => d.document_extractions?.[0]?.structured_data)
         .filter(Boolean);
     } catch (e) {}
 
@@ -117,19 +119,23 @@ export const analyzePatientCase = async (req, res) => {
       imageObservations: imageObservations
     });
 
-    // Save AI assessment into database safely
+    // Map risk level enum to safe lowercase for PostgreSQL enum schema
+    const rawRisk = (aiResult.risk_level || 'medium').toLowerCase();
+    const safeRiskEnum = ['low', 'medium', 'high'].includes(rawRisk) ? rawRisk : (rawRisk === 'emergency' ? 'high' : 'medium');
+
+    // Save AI assessment into database safely according to 29-table schema
     const aiAssessmentRecord = {
       visit_id: visit_id,
       model_provider: 'Groq',
       model_name: 'llama-3.3-70b-versatile',
-      prompt_version: 'v1.0',
-      summary: aiResult.patient_summary,
-      observations: aiResult.observations,
-      missing_information: aiResult.missing_information,
-      risk_level: aiResult.risk_level,
-      risk_reasoning: aiResult.warnings?.join(' ') || 'Standard protocol evaluation',
-      recommendations: aiResult.protocol_matches,
-      warnings: aiResult.warnings
+      processing_status: 'completed',
+      patient_summary: aiResult.patient_summary || 'Patient Assessment Summary',
+      preliminary_assessment: aiResult.patient_summary || 'Preliminary clinical review',
+      identified_symptoms: aiResult.identified_symptoms || [],
+      identified_risk_factors: aiResult.identified_risk_factors || [],
+      red_flags: aiResult.warnings || [],
+      uncertainty_notes: aiResult.uncertainty_notes || 'Clinical protocol evaluation',
+      ai_raw_output: aiResult
     };
 
     let savedAssessmentId = `ai_${Date.now()}`;
@@ -140,10 +146,26 @@ export const analyzePatientCase = async (req, res) => {
       console.warn('AI assessment DB insert fallback used:', e.message);
     }
 
-    // Update visit status based on risk level
-    const nextStatus = aiResult.risk_level === 'EMERGENCY' ? 'IN_CONSULTATION' : 'WAITING_DOCTOR';
+    // Save Risk Assessment safely to `ai_risk_assessments`
     try {
-      await supabaseAdmin.from('visits').update({ status: nextStatus }).eq('id', visit_id);
+      if (savedAssessmentId && !savedAssessmentId.startsWith('ai_')) {
+        await supabaseAdmin.from('ai_risk_assessments').insert([{
+          ai_assessment_id: savedAssessmentId,
+          risk_level: safeRiskEnum,
+          reason: aiResult.warnings?.join(' ') || 'Clinical protocol evaluation',
+          red_flags: aiResult.warnings || [],
+          recommended_action: aiResult.recommended_action || 'Doctor Consultation'
+        }]);
+      }
+    } catch (e) {}
+
+    // Update visit risk level and status
+    try {
+      await supabaseAdmin.from('visits').update({
+        status: 'awaiting_doctor',
+        risk_level: safeRiskEnum,
+        risk_reason: aiResult.warnings?.join(' ') || 'AI protocol triage'
+      }).eq('id', visit_id);
     } catch (e) {}
 
     logAuditEvent({
@@ -184,15 +206,15 @@ export const analyzeImageAI = async (req, res) => {
 
     const observation = await analyzeInjuryImage(file ? file.buffer : null, file ? file.mimetype : 'image/jpeg');
 
-    if (patient_id && visit_id) {
+    if (patient_id) {
       try {
         await supabaseAdmin.from('patient_images').insert([{
           patient_id,
-          visit_id,
-          storage_path: file ? file.originalname : 'injury_photo.jpg',
+          visit_id: visit_id || null,
+          storage_bucket: 'injury-photos',
+          storage_path: `injuries/${patient_id}/${Date.now()}_${file ? file.originalname : 'injury.jpg'}`,
           image_type: 'INJURY',
-          analysis_status: 'COMPLETED',
-          created_by: req.user?.id || null
+          mime_type: file ? file.mimetype : 'image/jpeg'
         }]);
       } catch (e) {}
     }

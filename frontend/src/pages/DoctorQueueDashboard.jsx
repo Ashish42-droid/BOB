@@ -16,15 +16,15 @@ export default function DoctorQueueDashboard() {
   // Doctor Video Modal State
   const [activeVideoRoom, setActiveVideoRoom] = useState(null);
 
-  // Incoming Ringing Call State
+  // Incoming Ringing Call State (Starts inactive - Only activates on real pushed calls)
   const [incomingCall, setIncomingCall] = useState({
-    active: true,
-    patient_name: 'Sunita Devi',
-    patient_code: 'PAT-2026-9021',
-    village: 'Rampur Sub-Centre',
-    risk_level: 'HIGH',
-    reason: 'High Risk Severe Respiratory Distress & High Fever',
-    room_id: 'room_sunita_9021'
+    active: false,
+    patient_name: '',
+    patient_code: '',
+    village: '',
+    risk_level: 'MODERATE',
+    reason: '',
+    room_id: ''
   });
 
   const navigate = useNavigate();
@@ -44,24 +44,26 @@ export default function DoctorQueueDashboard() {
       ]);
 
       const consultList = cRes.data || [];
-      setQueue(qRes.data || []);
+      const queueList = qRes.data || [];
+
+      setQueue(queueList);
       setConsultations(consultList);
 
-      // Check if there is an active pushed call for current selected doctor
-      const latestCall = consultList.find(c => c.status === 'CALL_RINGTONE_ACTIVE' || c.status === 'SCHEDULED');
-      if (latestCall) {
+      // Check if there is an active real-time pushed call for doctor
+      const latestActiveCall = consultList.find(c => c.status === 'CALL_RINGTONE_ACTIVE');
+      if (latestActiveCall) {
         setIncomingCall({
           active: true,
-          patient_name: latestCall.patient_name,
-          patient_code: latestCall.patient_code,
-          village: latestCall.village || 'Rampur Village',
-          risk_level: latestCall.risk_level || 'HIGH',
-          reason: latestCall.reason || 'High Priority AI Case Assessment Review',
-          room_id: latestCall.room_id,
-          ai_summary: latestCall.ai_summary,
-          vision_observation: latestCall.vision_observation,
-          verified_ocr_data: latestCall.verified_ocr_data,
-          consultation_id: latestCall.id
+          patient_name: latestActiveCall.patient_name || 'Patient',
+          patient_code: latestActiveCall.patient_code || 'PAT-2026-001',
+          village: latestActiveCall.village || 'Rampur Village',
+          risk_level: latestActiveCall.risk_level || 'HIGH',
+          reason: latestActiveCall.reason || 'High Priority AI Case Assessment Review',
+          room_id: latestActiveCall.room_id || `room_${latestActiveCall.id}`,
+          ai_summary: latestActiveCall.ai_summary,
+          vision_observation: latestActiveCall.vision_observation,
+          verified_ocr_data: latestActiveCall.verified_ocr_data,
+          consultation_id: latestActiveCall.id
         });
       }
 
@@ -72,18 +74,24 @@ export default function DoctorQueueDashboard() {
     }
   };
 
-  const handleDoctorJoinCall = async (consultId, roomId) => {
+  const handleDoctorJoinCall = async (consultId, roomId, patientName) => {
     try {
-      const res = await api.post(`/consultations/${consultId || 'c_101'}/join`);
+      if (consultId) {
+        await api.post(`/consultations/${consultId}/join`).catch(() => {});
+      }
       setActiveVideoRoom({
-        room_id: res.data.room_id || roomId,
-        user_name: selectedDoctor
+        room_id: roomId || `room_${Date.now()}`,
+        user_name: selectedDoctor,
+        user_id: `doc_${Date.now()}`,
+        patient_name: patientName || 'Patient'
       });
       setIncomingCall(prev => ({ ...prev, active: false }));
     } catch (err) {
       setActiveVideoRoom({
         room_id: roomId || `room_demo_101`,
-        user_name: selectedDoctor
+        user_name: selectedDoctor,
+        user_id: `doc_${Date.now()}`,
+        patient_name: patientName || 'Patient'
       });
       setIncomingCall(prev => ({ ...prev, active: false }));
     }
@@ -118,7 +126,7 @@ export default function DoctorQueueDashboard() {
         </div>
       </div>
 
-      {/* REALTIME INCOMING VIDEO CALL RINGING BANNER WITH AI SUMMARY + INJURY IMAGE + OCR PRESCRIPTION */}
+      {/* REALTIME INCOMING VIDEO CALL RINGING BANNER (ONLY SHOWS ON REAL PUSHED CALLS) */}
       {incomingCall && incomingCall.active && (
         <div className="glass-panel p-6 rounded-3xl border-2 border-emerald-500/60 bg-emerald-950/20 glow-emerald animate-pulse space-y-6">
           
@@ -143,7 +151,7 @@ export default function DoctorQueueDashboard() {
 
             <div className="flex items-center gap-3 w-full md:w-auto">
               <button
-                onClick={() => handleDoctorJoinCall(incomingCall.consultation_id || 'c_high_103', incomingCall.room_id)}
+                onClick={() => handleDoctorJoinCall(incomingCall.consultation_id, incomingCall.room_id, incomingCall.patient_name)}
                 className="flex-1 md:flex-none px-6 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2 transition-all"
               >
                 <PhoneCall className="w-4 h-4 animate-pulse" /> 🟢 ACCEPT & JOIN VIDEO CALL
@@ -163,19 +171,19 @@ export default function DoctorQueueDashboard() {
             {/* 1. AI Summary */}
             <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs space-y-1.5">
               <div className="font-bold text-cyan-300 flex items-center gap-1.5">
-                <Bot className="w-4 h-4 text-cyan-400" /> AI Clinical Assessment
+                <Bot className="w-4 h-4 text-cyan-400" /> AI LLM Clinical Assessment Summary
               </div>
-              <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-3">
-                {incomingCall.ai_summary?.patient_summary || 'High fever for 3 days with dry cough. Risk Level evaluated as MODERATE/HIGH. MoHFW Primary Care STG Protocol applied.'}
+              <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-4">
+                {incomingCall.ai_summary?.patient_summary || 'High fever with dry cough. Risk evaluated as MODERATE/HIGH. MoHFW Primary Care STG Protocol applied.'}
               </p>
             </div>
 
             {/* 2. Injury Photo */}
             <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs space-y-1.5">
               <div className="font-bold text-purple-300 flex items-center gap-1.5">
-                <Camera className="w-4 h-4 text-purple-400" /> Injury / Clinical Image
+                <Camera className="w-4 h-4 text-purple-400" /> Injury & Clinical Photo Observation
               </div>
-              <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-3">
+              <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-4">
                 {incomingCall.vision_observation?.cautious_summary || 'Observational photo uploaded by Assistant. Non-diagnostic image preview available for doctor inspection.'}
               </p>
             </div>
@@ -183,9 +191,9 @@ export default function DoctorQueueDashboard() {
             {/* 3. Prescription OCR */}
             <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs space-y-1.5">
               <div className="font-bold text-emerald-300 flex items-center gap-1.5">
-                <FileText className="w-4 h-4 text-emerald-400" /> Verified OCR Prescription
+                <FileText className="w-4 h-4 text-emerald-400" /> Scanned Document (OCR)
               </div>
-              <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-3">
+              <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-4">
                 {incomingCall.verified_ocr_data?.medications ? (
                   incomingCall.verified_ocr_data.medications.map(m => `${m.name} (${m.frequency})`).join(', ')
                 ) : 'Paper prescription uploaded and verified by Clinic Assistant.'}
@@ -208,50 +216,57 @@ export default function DoctorQueueDashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {consultations.map((c) => (
-            <div key={c.id} className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 flex flex-col justify-between space-y-3">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <RiskBadge level={c.risk_level || 'MODERATE'} />
-                  <span className="text-[10px] font-mono text-emerald-300 bg-emerald-950/80 border border-emerald-500/30 px-2 py-0.5 rounded">
-                    {c.status || 'SCHEDULED'}
-                  </span>
+        {consultations.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 text-xs border border-dashed border-slate-800 rounded-2xl">
+            No scheduled video calls pending.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {consultations.map((c) => (
+              <div key={c.id} className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 flex flex-col justify-between space-y-3">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <RiskBadge level={c.risk_level || 'MODERATE'} />
+                    <span className="text-[10px] font-mono text-emerald-300 bg-emerald-950/80 border border-emerald-500/30 px-2 py-0.5 rounded">
+                      {c.status || 'SCHEDULED'}
+                    </span>
+                  </div>
+
+                  <div className="font-bold text-sm text-white">{c.patient_name}</div>
+                  <div className="text-xs text-slate-400">Code: <strong className="text-cyan-400">{c.patient_code}</strong></div>
+                  <div className="text-[11px] text-slate-300 mt-1 font-medium">{c.reason || 'Follow-up Consultation'}</div>
+                  <div className="text-[11px] text-emerald-300 mt-1">Doctor: {c.doctor_name || selectedDoctor}</div>
+                  <div className="text-[11px] text-amber-300 flex items-center gap-1 mt-1">
+                    <Clock className="w-3 h-3" /> Scheduled: {new Date(c.scheduled_time || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
                 </div>
 
-                <div className="font-bold text-sm text-white">{c.patient_name}</div>
-                <div className="text-xs text-slate-400">Code: <strong className="text-cyan-400">{c.patient_code}</strong></div>
-                <div className="text-[11px] text-slate-300 mt-1 font-medium">{c.reason || 'Follow-up Consultation'}</div>
-                <div className="text-[11px] text-emerald-300 mt-1">Doctor: {c.doctor_name || selectedDoctor}</div>
-                <div className="text-[11px] text-amber-300 flex items-center gap-1 mt-1">
-                  <Clock className="w-3 h-3" /> Scheduled: {new Date(c.scheduled_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </div>
+                <button
+                  onClick={() => handleDoctorJoinCall(c.id, c.room_id, c.patient_name)}
+                  className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 border border-emerald-500/40 font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2"
+                >
+                  <PhoneCall className="w-4 h-4" /> 📞 ANSWER / JOIN VIDEO CONSULTATION
+                </button>
               </div>
-
-              <button
-                onClick={() => handleDoctorJoinCall(c.id, c.room_id)}
-                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 border border-emerald-500/40 font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2"
-              >
-                <PhoneCall className="w-4 h-4" /> 📞 ANSWER / JOIN VIDEO CONSULTATION
-              </button>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Minimalist Triage Queue Table / Grid */}
       <div className="space-y-4">
-        <h2 className="text-base font-bold text-white">Patient Triage Queue</h2>
+        <h2 className="text-base font-bold text-white">Patient Triage Queue (Retrieved from Supabase Database)</h2>
 
         {queue.length === 0 ? (
           <div className="glass-panel p-12 rounded-3xl border border-slate-800 text-center text-slate-400 text-xs">
-            No active cases waiting in queue.
+            No active cases waiting in queue. Add a patient from Assistant Portal to view here.
           </div>
         ) : (
           queue.map((item) => {
-            const patient = item.patients || { name: 'Ramesh Kumar', patient_code: 'PAT-2026-001', age: 42, gender: 'Male', village: 'Rampur' };
-            const riskLevel = item.ai_assessments?.[0]?.risk_level || 'MODERATE';
-            const isEmergency = riskLevel === 'EMERGENCY' || riskLevel === 'RED';
+            const patient = item.patients || { name: 'Ramesh Kumar', patient_code: 'PAT-2026-001', age: 42, gender: 'male', village: 'Rampur' };
+            const pName = patient.full_name || patient.name || 'Patient';
+            const riskLevel = item.risk_level || item.ai_assessments?.[0]?.risk_level || 'MODERATE';
+            const isEmergency = riskLevel === 'EMERGENCY' || riskLevel === 'RED' || riskLevel === 'HIGH';
 
             return (
               <div
@@ -261,26 +276,25 @@ export default function DoctorQueueDashboard() {
                 <div className="space-y-2 flex-1">
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="font-mono text-xs font-bold bg-slate-900 text-cyan-400 px-2.5 py-0.5 rounded border border-slate-800">
-                      {patient.patient_code}
+                      {patient.patient_code || 'PAT-2026-001'}
                     </span>
-                    <h3 className="text-base font-bold text-white">{patient.name}</h3>
+                    <h3 className="text-base font-bold text-white">{pName}</h3>
                     <RiskBadge level={riskLevel} />
                   </div>
 
                   <p className="text-xs text-slate-300">
-                    <strong>Chief Complaint:</strong> {item.chief_complaint || item.symptoms || 'Acute Febrile Illness & Cough'}
+                    <strong>Chief Complaint:</strong> {item.chief_complaint || item.symptoms || 'Acute Symptoms Review'}
                   </p>
 
                   <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
-                    <span>Village: <strong className="text-slate-200">{patient.village}</strong></span>
-                    <span>Wait Time: <strong className="text-amber-400">06 mins</strong></span>
-                    <span>Status: <span className="text-emerald-400 font-semibold">{item.status}</span></span>
+                    <span>Village: <strong className="text-slate-200">{patient.village || 'Rampur'}</strong></span>
+                    <span>Status: <span className="text-emerald-400 font-semibold">{item.status || 'open'}</span></span>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3 w-full md:w-auto justify-end">
                   <button
-                    onClick={() => handleDoctorJoinCall(item.id, `room_${item.id}`)}
+                    onClick={() => handleDoctorJoinCall(item.id, `room_${item.id}`, pName)}
                     className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/30 font-bold text-xs flex items-center gap-1.5"
                   >
                     <Video className="w-4 h-4 text-purple-400" /> Start Video Call
@@ -304,6 +318,8 @@ export default function DoctorQueueDashboard() {
         <VideoConsultationModal
           roomId={activeVideoRoom.room_id}
           userName={activeVideoRoom.user_name}
+          userId={activeVideoRoom.user_id}
+          patientName={activeVideoRoom.patient_name}
           onClose={() => setActiveVideoRoom(null)}
         />
       )}

@@ -3,7 +3,7 @@ import { ZegoUIKitPrebuilt } from '@zegocloud/zego-uikit-prebuilt';
 import { Video, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-export default function VideoConsultationModal({ roomId, onClose, patientName = 'Patient' }) {
+export default function VideoConsultationModal({ roomId, onClose, patientName = 'Patient', userName: propUserName, userId: propUserId }) {
   const containerRef = useRef(null);
   const { user } = useAuth();
 
@@ -14,16 +14,23 @@ export default function VideoConsultationModal({ roomId, onClose, patientName = 
       try {
         const appID = parseInt(import.meta.env.VITE_ZEGOCLOUD_APP_ID || '1586356449');
         const serverSecret = import.meta.env.VITE_ZEGOCLOUD_SERVER_SECRET || '37d7de5083083e70e9d7b6315a428884';
-        const userId = user?.id ? user.id.replace(/-/g, '_') : `user_${Math.floor(Math.random() * 10000)}`;
-        const userName = user?.name || 'Doctor';
+        
+        // Clean room ID to contain only alphanumeric and underscores
+        const cleanRoomId = (roomId || 'demo_room_101').replace(/[^a-zA-Z0-9_]/g, '_');
+        
+        // Ensure distinct User ID per participant so ZegoCloud connects two streams cleanly
+        const cleanUserId = propUserId || (user?.id ? `${user.role || 'usr'}_${user.id.replace(/[^a-zA-Z0-9]/g, '')}` : `user_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
+        const cleanUserName = propUserName || user?.name || (user?.role === 'DOCTOR' ? 'Dr. Remote Specialist' : `Clinic Assistant (${patientName})`);
+
+        console.log(`📹 Initializing ZegoCloud Video Room: ${cleanRoomId} for User: ${cleanUserName} (${cleanUserId})`);
 
         // Generate Kit Token
         const kitToken = ZegoUIKitPrebuilt.generateKitTokenForTest(
           appID,
           serverSecret,
-          roomId || 'demo_room',
-          userId,
-          userName
+          cleanRoomId,
+          cleanUserId,
+          cleanUserName
         );
 
         zpInstance = ZegoUIKitPrebuilt.create(kitToken);
@@ -41,7 +48,7 @@ export default function VideoConsultationModal({ roomId, onClose, patientName = 
           }
         });
       } catch (err) {
-        console.error('ZegoCloud init error:', err);
+        console.error('ZegoCloud Video Call init error:', err);
       }
     };
 
@@ -56,7 +63,7 @@ export default function VideoConsultationModal({ roomId, onClose, patientName = 
         } catch (e) {}
       }
     };
-  }, [roomId, user]);
+  }, [roomId, user, propUserName, propUserId]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-lg">
@@ -71,7 +78,7 @@ export default function VideoConsultationModal({ roomId, onClose, patientName = 
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 Live Video Teleconsultation
-                <span className="text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">Encrypted Call</span>
+                <span className="text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">ZegoCloud Encrypted Call</span>
               </h3>
               <p className="text-xs text-slate-400">Patient: <span className="text-slate-200 font-semibold">{patientName}</span> | Room ID: {roomId}</p>
             </div>
