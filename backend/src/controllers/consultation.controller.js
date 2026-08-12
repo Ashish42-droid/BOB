@@ -40,7 +40,7 @@ export const pushToDoctor = async (req, res) => {
       risk_level: (ai_assessment?.risk_level || 'HIGH').toUpperCase(),
       scheduled_time: new Date().toISOString(),
       mode: 'VIDEO',
-      status: 'CALL_RINGTONE_ACTIVE',
+      status: 'CASE_PUSHED',
       room_id: roomId,
       reason: ai_assessment?.patient_summary || 'High Priority AI Case Assessment Review',
       ai_summary: ai_assessment,
@@ -68,7 +68,7 @@ export const pushToDoctor = async (req, res) => {
       await supabaseAdmin.from('notifications').insert([{
         notification_type: 'consultation',
         channel: 'in_app',
-        title: `Incoming Call from ${newPushRecord.patient_name}`,
+        title: `New Case File from ${newPushRecord.patient_name}`,
         message: newPushRecord.reason,
         status: 'pending'
       }]);
@@ -170,25 +170,54 @@ export const scheduleConsultation = async (req, res) => {
   }
 };
 
-// Get All Scheduled Teleconsultations
+// Get All Scheduled Teleconsultations (Excluding DECLINED calls)
 export const getConsultations = async (req, res) => {
   try {
     let dbConsults = [];
     try {
-      const { data } = await supabaseAdmin.from('consultations').select('*').order('created_at', { ascending: false });
+      const { data } = await supabaseAdmin.from('consultations').select('*').neq('status', 'DECLINED').order('created_at', { ascending: false });
       if (data && data.length > 0) dbConsults = data;
     } catch (e) {}
 
-    // Combine in-memory + db consults
+    // Combine in-memory + db consults filtering out DECLINED calls
     const combinedMap = new Map();
-    MEMORY_CONSULTATIONS.forEach(c => combinedMap.set(c.id, c));
-    dbConsults.forEach(c => {
+    MEMORY_CONSULTATIONS.filter(c => c.status !== 'DECLINED').forEach(c => combinedMap.set(c.id, c));
+    dbConsults.filter(c => c.status !== 'DECLINED').forEach(c => {
       if (!combinedMap.has(c.id)) combinedMap.set(c.id, c);
     });
 
     return res.json(Array.from(combinedMap.values()));
   } catch (error) {
     return res.status(500).json({ error: 'Failed to fetch consultations', details: error.message });
+  }
+};
+
+// Decline Video Call Call - Stops Repeated Ringing until Assistant Recalls
+export const declineConsultation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    let consult = MEMORY_CONSULTATIONS.find(c => c.id === id || c.visit_id === id || c.room_id === id);
+
+    if (consult) {
+      consult.status = 'DECLINED';
+    }
+
+    try {
+      await supabaseAdmin.from('consultations').update({ status: 'DECLINED' }).eq('id', id);
+    } catch (e) {}
+
+    await logAuditEvent({
+      actorId: req.user?.id || 'dr_1',
+      actorRole: 'DOCTOR',
+      action: 'CONSULTATION_DECLINED',
+      entityType: 'CONSULTATIONS',
+      entityId: id
+    });
+
+    console.log(`🛑 Consultation Call ${id} DECLINED by Doctor. Ringing silenced.`);
+    return res.json({ message: 'Call declined by doctor successfully', status: 'DECLINED' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
   }
 };
 

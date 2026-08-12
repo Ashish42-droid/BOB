@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, Stethoscope, AlertTriangle, BookOpen, ShieldCheck, FileCheck2, UserCheck, Camera, FileText, Pill } from 'lucide-react';
+import { Bot, Stethoscope, AlertTriangle, BookOpen, ShieldCheck, FileCheck2, UserCheck, Camera, FileText, Pill, Eye } from 'lucide-react';
 import RiskBadge from './RiskBadge';
 
 export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, prescription, documents = [], images = [] }) {
@@ -95,18 +95,49 @@ export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, p
               </div>
             )}
 
-            {/* Injury Photo Observations */}
+            {/* Injury & Clinical Wound Photo Observations (Rendering Image + Computer Vision Analysis) */}
             {images && images.length > 0 && (
-              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
                 <div className="font-bold text-purple-300 flex items-center gap-1.5">
-                  <Camera className="w-4 h-4 text-purple-400" /> Injury & Clinical Photo Observations ({images.length})
+                  <Camera className="w-4 h-4 text-purple-400" /> Injury & Clinical Wound Photo Observations ({images.length})
                 </div>
-                {images.map((img, idx) => (
-                  <div key={idx} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px]">
-                    <div className="font-semibold text-purple-200">Image Type: {img.image_type || 'INJURY'}</div>
-                    <div className="text-slate-300 mt-0.5">Summary: Visible skin observation logged for doctor inspection.</div>
-                  </div>
-                ))}
+                
+                {images.map((img, idx) => {
+                  const imgUrl = img.image_url || img.storage_path;
+                  const cvData = img.computer_vision_analysis || {};
+
+                  return (
+                    <div key={idx} className="p-3 rounded-xl bg-slate-950 border border-purple-500/30 text-[11px] space-y-3">
+                      
+                      {/* Render Actual Wound Photo Image */}
+                      {imgUrl && (
+                        <div className="rounded-xl overflow-hidden border border-purple-500/30 max-h-56 bg-black flex items-center justify-center">
+                          <img src={imgUrl} alt="Uploaded Clinical Wound Photo" className="max-h-56 object-contain w-full" />
+                        </div>
+                      )}
+
+                      {/* Computer Vision Breakdown */}
+                      <div className="space-y-1.5">
+                        <div className="font-bold text-purple-300 flex items-center gap-1">
+                          <Eye className="w-3.5 h-3.5 text-purple-400" /> Computer Vision Surface Analysis:
+                        </div>
+                        {cvData.tissue_margin && (
+                          <div className="text-slate-300"><strong>Tissue Margin Erythema:</strong> {cvData.tissue_margin}</div>
+                        )}
+                        {cvData.surface_features && (
+                          <div className="text-slate-300"><strong>Surface Features:</strong> {cvData.surface_features}</div>
+                        )}
+                        {cvData.exudate_observation && (
+                          <div className="text-slate-300"><strong>Exudate / Discharge:</strong> {cvData.exudate_observation}</div>
+                        )}
+                      </div>
+
+                      <div className="text-slate-200 pt-1 border-t border-slate-800">
+                        <strong>Cautious Summary:</strong> {img.cautious_summary || 'Visible skin redness and surface swelling logged for doctor review.'}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
 

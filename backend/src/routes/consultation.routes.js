@@ -3,6 +3,7 @@ import {
   scheduleConsultation,
   getConsultations,
   joinConsultation,
+  declineConsultation,
   createConsultation,
   startConsultation,
   endConsultation,
@@ -18,6 +19,7 @@ router.post('/push-to-doctor', pushToDoctor);
 router.post('/schedule', scheduleConsultation);
 router.get('/', getConsultations);
 router.post('/:id/join', joinConsultation);
+router.post('/:id/decline', declineConsultation);
 
 router.post('/', createConsultation);
 router.post('/:id/start', startConsultation);

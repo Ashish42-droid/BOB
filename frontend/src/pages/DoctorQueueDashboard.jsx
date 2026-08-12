@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Stethoscope, Clock, ShieldAlert, ArrowRight, Video, User, AlertOctagon, PhoneCall, PhoneIncoming, PhoneOff, Bot, Camera, FileText, CheckCircle2 } from 'lucide-react';
+import { Stethoscope, Clock, ShieldAlert, ArrowRight, Video, User, AlertOctagon, PhoneCall, PhoneIncoming, PhoneOff, Bot, Camera, FileText, CheckCircle2, Eye } from 'lucide-react';
 import api from '../services/api';
 import RiskBadge from '../components/RiskBadge';
 import VideoConsultationModal from '../components/VideoConsultationModal';
@@ -16,7 +16,7 @@ export default function DoctorQueueDashboard() {
   // Doctor Video Modal State
   const [activeVideoRoom, setActiveVideoRoom] = useState(null);
 
-  // Incoming Ringing Call State (Starts inactive - Only activates on real pushed calls)
+  // Incoming Ringing Call State (Starts inactive)
   const [incomingCall, setIncomingCall] = useState({
     active: false,
     patient_name: '',
@@ -43,14 +43,14 @@ export default function DoctorQueueDashboard() {
         api.get('/consultations').catch(() => ({ data: [] }))
       ]);
 
-      const consultList = cRes.data || [];
+      const consultList = (cRes.data || []).filter(c => c.status !== 'DECLINED');
       const queueList = qRes.data || [];
 
       setQueue(queueList);
       setConsultations(consultList);
 
-      // Check if there is an active real-time pushed call for doctor
-      const latestActiveCall = consultList.find(c => c.status === 'CALL_RINGTONE_ACTIVE');
+      // Check if there is an active real-time pushed call for doctor (that was NOT declined)
+      const latestActiveCall = consultList.find(c => c.status === 'CALL_RINGTONE_ACTIVE' && c.status !== 'DECLINED');
       if (latestActiveCall) {
         setIncomingCall({
           active: true,
@@ -97,6 +97,17 @@ export default function DoctorQueueDashboard() {
     }
   };
 
+  const handleDeclineCall = async (consultId) => {
+    try {
+      if (consultId) {
+        await api.post(`/consultations/${consultId}/decline`).catch(() => {});
+      }
+      setIncomingCall({ active: false });
+    } catch (err) {
+      setIncomingCall({ active: false });
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
       
@@ -126,9 +137,9 @@ export default function DoctorQueueDashboard() {
         </div>
       </div>
 
-      {/* REALTIME INCOMING VIDEO CALL RINGING BANNER (ONLY SHOWS ON REAL PUSHED CALLS) */}
+      {/* REALTIME INCOMING VIDEO CALL BANNER */}
       {incomingCall && incomingCall.active && (
-        <div className="glass-panel p-6 rounded-3xl border-2 border-emerald-500/60 bg-emerald-950/20 glow-emerald animate-pulse space-y-6">
+        <div className="glass-panel p-6 rounded-3xl border-2 border-emerald-500/60 bg-emerald-950/20 glow-emerald space-y-6">
           
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
@@ -138,7 +149,7 @@ export default function DoctorQueueDashboard() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                    📞 REALTIME INCOMING VIDEO CALL
+                    📞 REALTIME EMERGENCY CONSULTATION REQUEST
                   </span>
                   <RiskBadge level={incomingCall.risk_level} />
                 </div>
@@ -157,34 +168,42 @@ export default function DoctorQueueDashboard() {
                 <PhoneCall className="w-4 h-4 animate-pulse" /> 🟢 ACCEPT & JOIN VIDEO CALL
               </button>
               <button
-                onClick={() => setIncomingCall(prev => ({ ...prev, active: false }))}
+                onClick={() => handleDeclineCall(incomingCall.consultation_id)}
                 className="px-4 py-3 rounded-2xl bg-slate-900 hover:bg-rose-950/60 hover:text-rose-400 text-slate-400 border border-slate-800 font-bold text-xs flex items-center gap-1.5"
               >
-                <PhoneOff className="w-4 h-4" /> DECLINE
+                <PhoneOff className="w-4 h-4" /> DECLINE CALL
               </button>
             </div>
           </div>
 
-          {/* REALTIME PUSHED CLINICAL PACKET (AI SUMMARY + INJURY PHOTO + PRESCRIPTION OCR) */}
+          {/* REALTIME PUSHED CLINICAL PACKET WITH INJURY IMAGE & COMPUTER VISION ANALYSIS */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-emerald-500/20">
             
             {/* 1. AI Summary */}
             <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs space-y-1.5">
               <div className="font-bold text-cyan-300 flex items-center gap-1.5">
-                <Bot className="w-4 h-4 text-cyan-400" /> AI LLM Clinical Assessment Summary
+                <Bot className="w-4 h-4 text-cyan-400" /> AI LLM Assessment Summary
               </div>
               <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-4">
                 {incomingCall.ai_summary?.patient_summary || 'High fever with dry cough. Risk evaluated as MODERATE/HIGH. MoHFW Primary Care STG Protocol applied.'}
               </p>
             </div>
 
-            {/* 2. Injury Photo */}
-            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs space-y-1.5">
-              <div className="font-bold text-purple-300 flex items-center gap-1.5">
-                <Camera className="w-4 h-4 text-purple-400" /> Injury & Clinical Photo Observation
+            {/* 2. Injury Photo & Detailed Computer Vision Analysis */}
+            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs space-y-2">
+              <div className="font-bold text-purple-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5"><Eye className="w-4 h-4 text-purple-400" /> Computer Vision Wound Analysis</span>
               </div>
-              <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-4">
-                {incomingCall.vision_observation?.cautious_summary || 'Observational photo uploaded by Assistant. Non-diagnostic image preview available for doctor inspection.'}
+              
+              {/* Actual Uploaded Wound Photo Thumbnail */}
+              {incomingCall.vision_observation?.image_url && (
+                <div className="rounded-xl overflow-hidden border border-purple-500/30">
+                  <img src={incomingCall.vision_observation.image_url} alt="Uploaded Wound Photo" className="w-full h-28 object-cover" />
+                </div>
+              )}
+
+              <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-3">
+                {incomingCall.vision_observation?.cautious_summary || 'Computer Vision: Erythematous margin and mild swelling logged for doctor inspection.'}
               </p>
             </div>
 
@@ -241,12 +260,20 @@ export default function DoctorQueueDashboard() {
                   </div>
                 </div>
 
-                <button
-                  onClick={() => handleDoctorJoinCall(c.id, c.room_id, c.patient_name)}
-                  className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 border border-emerald-500/40 font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2"
-                >
-                  <PhoneCall className="w-4 h-4" /> 📞 ANSWER / JOIN VIDEO CONSULTATION
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleDoctorJoinCall(c.id, c.room_id, c.patient_name)}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 border border-emerald-500/40 font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <PhoneCall className="w-4 h-4" /> ANSWER CALL
+                  </button>
+                  <button
+                    onClick={() => handleDeclineCall(c.id)}
+                    className="px-3 py-2.5 rounded-xl bg-slate-950 hover:bg-rose-950 hover:text-rose-400 text-slate-400 border border-slate-800 font-bold text-xs"
+                  >
+                    DECLINE
+                  </button>
+                </div>
               </div>
             ))}
           </div>
