@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Stethoscope, Video, FileText, CheckCircle2, AlertOctagon, ArrowLeft, HeartPulse } from 'lucide-react';
+import { Stethoscope, Video, FileText, CheckCircle2, AlertOctagon, ArrowLeft, HeartPulse, AlertCircle, RefreshCw } from 'lucide-react';
 import api from '../services/api';
 import AIDoctorVisualSeparation from '../components/AIDoctorVisualSeparation';
 import VideoConsultationModal from '../components/VideoConsultationModal';
@@ -11,6 +11,7 @@ export default function DoctorCaseViewPage() {
 
   const [visit, setVisit] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
 
   // Doctor Action States
   const [doctorNotes, setDoctorNotes] = useState('');
@@ -30,34 +31,14 @@ export default function DoctorCaseViewPage() {
 
   const fetchCase = async () => {
     setLoading(true);
+    setFetchError(null);
     try {
       const res = await api.get(`/doctor/cases/${visitId}`);
       setVisit(res.data);
     } catch (err) {
-      setVisit({
-        id: visitId,
-        chief_complaint: 'Tez bukhar 3 din se aur khansi',
-        symptoms: 'High fever 101.2°F, dry cough, body aches',
-        symptom_duration: '3 days',
-        medical_history: 'No chronic illness',
-        status: 'WAITING_DOCTOR',
-        patients: {
-          id: 'pt000000-0000-0000-0000-000000000001',
-          patient_code: 'PAT-2026-001',
-          name: 'Ramesh Kumar',
-          age: 42,
-          gender: 'Male',
-          village: 'Rampur',
-          preferred_language: 'Hindi'
-        },
-        vitals: [{ temperature: 101.2, pulse: 88, spo2: 97, blood_pressure_systolic: 120, blood_pressure_diastolic: 80 }],
-        ai_assessments: [{
-          risk_level: 'MODERATE',
-          patient_summary: 'Patient Ramesh Kumar (42M) presents with 3-day acute febrile illness (Temp 101.2°F, SpO2 97%). Verified prescription document confirms recent paracetamol intake.',
-          warnings: ['High body temperature recorded: 101.2°F.'],
-          protocol_matches: [{ title: 'Acute Febrile Illness Protocol (MoHFW)', source: 'Govt of India STG 2024', guidance: 'Symptomatic fever management + oral hydration.' }]
-        }]
-      });
+      console.error('Failed to load visit case from database:', err);
+      setFetchError(err.response?.data?.error || err.message || 'Case file not found in database.');
+      setVisit(null);
     } finally {
       setLoading(false);
     }
@@ -103,10 +84,45 @@ export default function DoctorCaseViewPage() {
     }
   };
 
-  if (!visit) return <div className="p-8 text-center text-slate-500">Loading Case Details...</div>;
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 lg:px-8 py-16 text-center text-xs text-slate-500">
+        <RefreshCw className="w-5 h-5 text-blue-600 animate-spin mx-auto mb-2" />
+        Retrieving Case File from Supabase Database...
+      </div>
+    );
+  }
 
-  const patient = visit.patients || { name: 'Ramesh Kumar', patient_code: 'PAT-2026-001', age: 42, gender: 'Male', village: 'Rampur' };
-  const vitals = visit.visit_vitals?.[0] || visit.vitals?.[0] || { temperature: 101.2, blood_pressure_systolic: 120, blood_pressure_diastolic: 80, pulse: 88, spo2: 97 };
+  if (fetchError || !visit) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-16 space-y-4 text-center">
+        <div className="p-6 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800 space-y-3">
+          <AlertCircle className="w-8 h-8 text-red-600 mx-auto" />
+          <div className="font-bold text-sm">Failed to Load Patient Case File</div>
+          <p>{fetchError || 'The requested visit ID was not found in the database.'}</p>
+          <div className="pt-2 flex items-center justify-center gap-3">
+            <button
+              onClick={() => navigate('/doctor/queue')}
+              className="px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-700 font-semibold text-xs hover:bg-slate-50"
+            >
+              Back to Queue
+            </button>
+            <button
+              onClick={fetchCase}
+              className="px-4 py-2 rounded-lg bg-red-600 text-white font-semibold text-xs hover:bg-red-700 shadow-sm flex items-center gap-1"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Retry Fetch
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const patient = visit.patients || {};
+  const pName = patient.full_name || patient.name || 'Patient Record';
+  const pCode = patient.patient_code || 'PAT-RECORD';
+  const vitals = visit.visit_vitals?.[0] || visit.vitals?.[0] || {};
   const aiAssessment = visit.ai_assessments?.[0] || visit.ai_summary;
   const documents = visit.patient_documents || visit.medical_documents || [];
   const images = visit.patient_images || [];
@@ -125,13 +141,13 @@ export default function DoctorCaseViewPage() {
           </button>
           <div>
             <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-              Case Review: {patient.full_name || patient.name}
+              Case Review: {pName}
               <span className="font-mono text-xs bg-slate-100 text-blue-600 px-2 py-0.5 rounded border border-slate-200">
-                {patient.patient_code}
+                {pCode}
               </span>
             </h1>
             <p className="text-xs text-slate-500">
-              {patient.age_years || patient.age} Yrs | {patient.gender} | Village: {patient.village} | Language: {patient.preferred_language || 'Hindi'}
+              {patient.age_years || patient.age || 'N/A'} Yrs | {patient.gender || 'N/A'} | Village: {patient.village || 'Primary Health Centre'} | Language: {patient.preferred_language || 'Hindi'}
             </p>
           </div>
         </div>
@@ -275,7 +291,7 @@ export default function DoctorCaseViewPage() {
       {showVideoCall && (
         <VideoConsultationModal
           roomId={`room_${visitId.replace(/-/g, '_')}`}
-          patientName={patient.full_name || patient.name}
+          patientName={pName}
           userName="Dr. Remote Specialist"
           userId={`doc_${Date.now()}`}
           onClose={() => setShowVideoCall(false)}
