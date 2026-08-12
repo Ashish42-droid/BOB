@@ -2,7 +2,7 @@ import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
-import Navbar from './components/Navbar';
+import SidebarLayout from './components/SidebarLayout';
 import CursorGradient from './components/CursorGradient';
 
 import LandingPage from './pages/LandingPage';
@@ -29,12 +29,11 @@ function ProtectedRoute({ children, allowedRoles }) {
 export default function App() {
   return (
     <AuthProvider>
-      <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 relative overflow-hidden">
+      <div className="min-h-screen relative font-sans">
         {/* Interactive Cursor-Following Radial Gradient */}
         <CursorGradient />
 
-        <Navbar />
-        <main className="flex-1 relative z-10">
+        <SidebarLayout>
           <Routes>
             {/* Public Routes */}
             <Route path="/" element={<LandingPage />} />
@@ -97,7 +96,7 @@ export default function App() {
             {/* Fallback Catch-all */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </main>
+        </SidebarLayout>
       </div>
     </AuthProvider>
   );
