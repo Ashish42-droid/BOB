@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Mic, Upload, FileText, Camera, Bot, ShieldCheck, ArrowRight, CheckCircle2, AlertTriangle, Activity, User, HeartPulse, RefreshCw, BookOpen, AlertOctagon, Download, Pill, PhoneCall, ArrowLeft, MicOff, Globe } from 'lucide-react';
+import { Mic, Upload, FileText, Camera, Bot, ShieldCheck, ArrowRight, CheckCircle2, AlertTriangle, Activity, User, HeartPulse, RefreshCw, BookOpen, AlertOctagon, Download, Pill, PhoneCall, ArrowLeft, MicOff, Globe, Video } from 'lucide-react';
 import api from '../services/api';
 import RiskBadge from '../components/RiskBadge';
 import OCRVerificationModal from '../components/OCRVerificationModal';
+import VideoConsultationModal from '../components/VideoConsultationModal';
 
 export default function PatientAssessmentVisitPage() {
   const { id: patientId } = useParams();
@@ -21,6 +22,10 @@ export default function PatientAssessmentVisitPage() {
   const [medicalHistory, setMedicalHistory] = useState('No chronic hypertension or diabetes history');
   const [recording, setRecording] = useState(false);
   const [detectedLanguage, setDetectedLanguage] = useState('Auto-Detecting...');
+
+  // Selected Doctor for Video Call
+  const [selectedDoctor, setSelectedDoctor] = useState('Dr. Rajesh Sharma (AIIMS New Delhi)');
+  const [activeVideoRoom, setActiveVideoRoom] = useState(null);
 
   // Real Microphone Recording Refs
   const mediaRecorderRef = useRef(null);
@@ -235,16 +240,21 @@ export default function PatientAssessmentVisitPage() {
     window.print();
   };
 
-  // Escalate to Doctor Queue
+  // Escalate & Launch Video Call with Selected Doctor
   const handleEscalateToDoctor = async () => {
     try {
       if (visitId) {
         await api.put(`/visits/${visitId}`, { status: 'WAITING_FOR_DOCTOR' }).catch(() => {});
       }
-      alert('Case successfully escalated to Remote Doctor Consultation Queue!');
-      navigate('/doctor/queue');
+      setActiveVideoRoom({
+        room_id: `room_${(patient?.patient_code || 'PAT_101').replace(/[^a-zA-Z0-9]/g, '_')}`,
+        user_name: `Patient (${patient?.name}) & Clinic Assistant`
+      });
     } catch (err) {
-      navigate('/doctor/queue');
+      setActiveVideoRoom({
+        room_id: `room_demo_101`,
+        user_name: `Patient (${patient?.name}) & Clinic Assistant`
+      });
     }
   };
 
@@ -597,6 +607,22 @@ export default function PatientAssessmentVisitPage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                  {/* SELECT DOCTOR SPECIALIST DROPDOWN */}
+                  <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2">
+                    <span className="text-[11px] text-slate-400 font-semibold">Doctor:</span>
+                    <select
+                      value={selectedDoctor}
+                      onChange={(e) => setSelectedDoctor(e.target.value)}
+                      className="bg-transparent text-xs text-white outline-none font-semibold cursor-pointer"
+                    >
+                      <option value="Dr. Rajesh Sharma (AIIMS New Delhi)" className="bg-slate-900 text-white">Dr. Rajesh Sharma (AIIMS)</option>
+                      <option value="Dr. Ananya Sen (JIPMER Puducherry)" className="bg-slate-900 text-white">Dr. Ananya Sen (JIPMER)</option>
+                      <option value="Dr. Vikramaditya Rao (PGIMER Chandigarh)" className="bg-slate-900 text-white">Dr. Vikramaditya Rao (PGIMER)</option>
+                      <option value="Dr. Meera Nambiar (KEM Hospital Mumbai)" className="bg-slate-900 text-white">Dr. Meera Nambiar (KEM)</option>
+                      <option value="Dr. Suresh Patel (BHU Varanasi)" className="bg-slate-900 text-white">Dr. Suresh Patel (BHU)</option>
+                    </select>
+                  </div>
+
                   {/* SAVE / DOWNLOAD PDF BUTTON */}
                   <button
                     onClick={handleDownloadPDF}
@@ -605,12 +631,12 @@ export default function PatientAssessmentVisitPage() {
                     <Download className="w-4 h-4 text-cyan-400" /> DOWNLOAD CASE PDF
                   </button>
 
-                  {/* REFER / ESCALATE TO DOCTOR BUTTON */}
+                  {/* REFER & START VIDEO CALL BUTTON */}
                   <button
                     onClick={handleEscalateToDoctor}
-                    className={`px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-lg transition-all flex items-center gap-2 ${isHighOrEmergency ? 'bg-gradient-to-r from-rose-600 to-amber-600 hover:brightness-110 text-white shadow-rose-600/30 animate-pulse' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'}`}
+                    className={`px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-lg transition-all flex items-center gap-2 ${isHighOrEmergency ? 'bg-gradient-to-r from-emerald-500 to-teal-400 hover:brightness-110 text-slate-950 shadow-emerald-500/30' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'}`}
                   >
-                    <PhoneCall className="w-4 h-4" /> {isHighOrEmergency ? '🚨 REFER / ESCALATE TO DOCTOR IMMEDIATELY' : 'TRANSFER TO DOCTOR QUEUE'}
+                    <Video className="w-4 h-4 animate-pulse" /> 📹 CONNECT VIDEO CALL WITH DOCTOR
                   </button>
                 </div>
               </div>
@@ -736,6 +762,15 @@ export default function PatientAssessmentVisitPage() {
             setShowOCRModal(false);
           }}
           onClose={() => setShowOCRModal(false)}
+        />
+      )}
+
+      {/* ZEGO CLOUD VIDEO CONSULTATION MODAL */}
+      {activeVideoRoom && (
+        <VideoConsultationModal
+          roomId={activeVideoRoom.room_id}
+          userName={activeVideoRoom.user_name}
+          onClose={() => setActiveVideoRoom(null)}
         />
       )}
 
