@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { logAuditEvent } from '../middleware/audit.middleware.js';
 
-// Real-Time In-Memory Patient Persistence Cache (Starts Clean)
+// Real-Time In-Memory Patient Persistence Cache
 let MEMORY_PATIENTS = [];
 
 // Helper to generate unique Patient Code
@@ -49,11 +49,18 @@ export const createPatient = async (req, res) => {
         .insert([patientRecord])
         .select()
         .single();
+      
       if (!error && data) {
         newPatient = data;
+        console.log(`🎉 REAL-TIME SUPABASE DATABASE INSERT SUCCESSFUL! ID: ${newPatient.id} (${newPatient.name})`);
+      } else if (error) {
+        console.error(`⚠️ SUPABASE DATABASE INSERT REJECTED:`, error.message);
+        if (error.code === 'PGRST205') {
+          console.error(`📌 REASON: The 'patients' table does not exist in your Supabase SQL database yet. Run schema in Supabase SQL Editor.`);
+        }
       }
     } catch (e) {
-      console.warn('Supabase DB patient insert warning:', e.message);
+      console.warn('Supabase DB patient insert exception:', e.message);
     }
 
     if (!newPatient) {
@@ -75,7 +82,7 @@ export const createPatient = async (req, res) => {
 
     // Unshift to real-time memory store
     MEMORY_PATIENTS.unshift(newPatient);
-    console.log(`✅ Patient successfully registered & synced in real-time! ID: ${newPatient.patient_code} (${newPatient.name})`);
+    console.log(`✅ Patient registered & saved! Code: ${newPatient.patient_code} (${newPatient.name})`);
 
     logAuditEvent({
       actorId: req.user?.id || 'assistant_001',

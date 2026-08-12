@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Mic, Upload, FileText, Camera, Bot, ShieldCheck, ArrowRight, CheckCircle2, AlertTriangle, Activity, User, HeartPulse, RefreshCw, BookOpen, AlertOctagon, Download, Pill, PhoneCall, ArrowLeft, MicOff, Globe, Video } from 'lucide-react';
+import { Mic, Upload, FileText, Camera, Bot, ShieldCheck, ArrowRight, CheckCircle2, AlertTriangle, Activity, User, HeartPulse, RefreshCw, BookOpen, AlertOctagon, Download, Pill, PhoneCall, ArrowLeft, MicOff, Globe, Video, Send } from 'lucide-react';
 import api from '../services/api';
 import RiskBadge from '../components/RiskBadge';
 import OCRVerificationModal from '../components/OCRVerificationModal';
@@ -26,6 +26,8 @@ export default function PatientAssessmentVisitPage() {
   // Selected Doctor for Video Call
   const [selectedDoctor, setSelectedDoctor] = useState('Dr. Rajesh Sharma (AIIMS New Delhi)');
   const [activeVideoRoom, setActiveVideoRoom] = useState(null);
+  const [pushingToDoctor, setPushingToDoctor] = useState(false);
+  const [pushSuccess, setPushSuccess] = useState(false);
 
   // Real Microphone Recording Refs
   const mediaRecorderRef = useRef(null);
@@ -235,27 +237,44 @@ export default function PatientAssessmentVisitPage() {
     }
   };
 
+  // Push Full Clinical Data (AI Summary + Injury Image + Prescription OCR) to Selected Doctor Portal in Real-Time
+  const handlePushCaseToDoctor = async () => {
+    setPushingToDoctor(true);
+    try {
+      const res = await api.post('/consultations/push-to-doctor', {
+        patient_id: patientId,
+        patient_name: patient?.name,
+        patient_code: patient?.patient_code,
+        visit_id: visitId || `v_${Date.now()}`,
+        doctor_name: selectedDoctor,
+        ai_assessment: aiAssessment,
+        vision_observation: visionObservation,
+        verified_ocr_data: verifiedOCRData,
+        vitals: vitals,
+        symptoms: symptomsText,
+        village: patient?.village
+      });
+
+      setPushSuccess(true);
+      setTimeout(() => setPushSuccess(false), 5000);
+
+      // Open Video Consultation Room for Patient & Assistant
+      if (res.data?.room_id) {
+        setActiveVideoRoom({
+          room_id: res.data.room_id,
+          user_name: `Patient (${patient?.name}) & Clinic Assistant`
+        });
+      }
+    } catch (err) {
+      alert('Push to doctor portal failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setPushingToDoctor(false);
+    }
+  };
+
   // Export PDF Clinical Summary
   const handleDownloadPDF = () => {
     window.print();
-  };
-
-  // Escalate & Launch Video Call with Selected Doctor
-  const handleEscalateToDoctor = async () => {
-    try {
-      if (visitId) {
-        await api.put(`/visits/${visitId}`, { status: 'WAITING_FOR_DOCTOR' }).catch(() => {});
-      }
-      setActiveVideoRoom({
-        room_id: `room_${(patient?.patient_code || 'PAT_101').replace(/[^a-zA-Z0-9]/g, '_')}`,
-        user_name: `Patient (${patient?.name}) & Clinic Assistant`
-      });
-    } catch (err) {
-      setActiveVideoRoom({
-        room_id: `room_demo_101`,
-        user_name: `Patient (${patient?.name}) & Clinic Assistant`
-      });
-    }
   };
 
   if (!patient) {
@@ -325,7 +344,7 @@ export default function PatientAssessmentVisitPage() {
           { id: 'vitals', label: '2. Clinical Vitals', icon: <HeartPulse className="w-4 h-4" /> },
           { id: 'documents', label: '3. Prescription OCR', icon: <FileText className="w-4 h-4" /> },
           { id: 'vision', label: '4. Injury Photo', icon: <Camera className="w-4 h-4" /> },
-          { id: 'ai_summary', label: '5. AI Assessment & PDF', icon: <Bot className="w-4 h-4" /> }
+          { id: 'ai_summary', label: '5. AI Assessment & Doctor Push', icon: <Bot className="w-4 h-4" /> }
         ].map(tab => (
           <button
             key={tab.id}
@@ -593,12 +612,20 @@ export default function PatientAssessmentVisitPage() {
         </div>
       )}
 
-      {/* TAB 5: AI SUMMARY, PDF EXPORT & DOCTOR REFERRAL */}
+      {/* TAB 5: AI SUMMARY, PDF EXPORT & REALTIME DOCTOR PUSH */}
       {activeTab === 'ai_summary' && (
         <div className="space-y-6">
           {aiAssessment ? (
             <div className="space-y-6">
               
+              {/* REAL-TIME SUCCESS ALERT BANNER */}
+              {pushSuccess && (
+                <div className="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-bounce">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  🎉 CASE PACKET (AI SUMMARY + INJURY IMAGE + OCR PRESCRIPTION) SUCCESSFULLY PUSHED TO {selectedDoctor.toUpperCase()} IN REAL-TIME!
+                </div>
+              )}
+
               {/* Top Banner Actions & Risk Classification */}
               <div className="glass-panel p-6 rounded-3xl border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
@@ -609,7 +636,7 @@ export default function PatientAssessmentVisitPage() {
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
                   {/* SELECT DOCTOR SPECIALIST DROPDOWN */}
                   <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2">
-                    <span className="text-[11px] text-slate-400 font-semibold">Doctor:</span>
+                    <span className="text-[11px] text-slate-400 font-semibold">Target Doctor:</span>
                     <select
                       value={selectedDoctor}
                       onChange={(e) => setSelectedDoctor(e.target.value)}
@@ -628,15 +655,24 @@ export default function PatientAssessmentVisitPage() {
                     onClick={handleDownloadPDF}
                     className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 font-bold text-xs transition-all flex items-center gap-2"
                   >
-                    <Download className="w-4 h-4 text-cyan-400" /> DOWNLOAD CASE PDF
+                    <Download className="w-4 h-4 text-cyan-400" /> DOWNLOAD PDF
                   </button>
 
-                  {/* REFER & START VIDEO CALL BUTTON */}
+                  {/* REALTIME PUSH CASE TO DOCTOR PORTAL BUTTON */}
                   <button
-                    onClick={handleEscalateToDoctor}
+                    onClick={handlePushCaseToDoctor}
+                    disabled={pushingToDoctor}
                     className={`px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-lg transition-all flex items-center gap-2 ${isHighOrEmergency ? 'bg-gradient-to-r from-emerald-500 to-teal-400 hover:brightness-110 text-slate-950 shadow-emerald-500/30' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'}`}
                   >
-                    <Video className="w-4 h-4 animate-pulse" /> 📹 CONNECT VIDEO CALL WITH DOCTOR
+                    {pushingToDoctor ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" /> PUSHING REAL-TIME TO DOCTOR...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4 animate-pulse" /> 🚀 PUSH CASE TO DOCTOR PORTAL (REALTIME)
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

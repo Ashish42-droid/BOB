@@ -5,6 +5,99 @@ import { logAuditEvent } from '../middleware/audit.middleware.js';
 // Real-Time In-Memory Persistence Store for Scheduled Video Teleconsultations (Starts Clean)
 let MEMORY_CONSULTATIONS = [];
 
+// Push Complete Case Context (AI Summary + Injury Photo + Prescription OCR) to Doctor Portal in Real-Time
+export const pushToDoctor = async (req, res) => {
+  try {
+    const {
+      patient_id,
+      patient_name,
+      patient_code,
+      visit_id,
+      doctor_name,
+      ai_assessment,
+      vision_observation,
+      verified_ocr_data,
+      vitals,
+      symptoms,
+      village
+    } = req.body;
+
+    if (!patient_id) {
+      return res.status(400).json({ error: 'patient_id is required' });
+    }
+
+    const cleanCode = (patient_code || 'PAT-2026-9000').replace(/[^a-zA-Z0-9]/g, '_');
+    const roomId = `room_${cleanCode}_${Date.now()}`;
+
+    const newPushRecord = {
+      id: `c_${Date.now()}`,
+      visit_id: visit_id || `v_${Date.now()}`,
+      patient_id,
+      patient_name: patient_name || 'Patient',
+      patient_code: patient_code || 'PAT-2026-001',
+      village: village || 'Rampur Village',
+      doctor_name: doctor_name || 'Dr. Rajesh Sharma (AIIMS New Delhi)',
+      risk_level: (ai_assessment?.risk_level || 'HIGH').toUpperCase(),
+      scheduled_time: new Date().toISOString(),
+      mode: 'VIDEO',
+      status: 'CALL_RINGTONE_ACTIVE',
+      room_id: roomId,
+      reason: ai_assessment?.patient_summary || 'High Priority AI Case Assessment Review',
+      ai_summary: ai_assessment,
+      vision_observation,
+      verified_ocr_data,
+      vitals,
+      symptoms,
+      created_at: new Date().toISOString()
+    };
+
+    // Insert to Supabase DB consultations table
+    try {
+      await supabaseAdmin.from('consultations').insert([{
+        visit_id: newPushRecord.visit_id,
+        mode: 'VIDEO',
+        status: 'waiting',
+        meeting_room_id: roomId
+      }]);
+    } catch (e) {
+      console.warn('Supabase DB consultation insert warning:', e.message);
+    }
+
+    // Insert to Supabase DB notifications table
+    try {
+      await supabaseAdmin.from('notifications').insert([{
+        notification_type: 'consultation',
+        channel: 'in_app',
+        title: `Incoming Call from ${newPushRecord.patient_name}`,
+        message: newPushRecord.reason,
+        status: 'pending'
+      }]);
+    } catch (e) {}
+
+    MEMORY_CONSULTATIONS.unshift(newPushRecord);
+
+    await logAuditEvent({
+      actorId: req.user?.id || 'assistant_001',
+      actorRole: req.user?.role || 'CLINIC_ASSISTANT',
+      action: 'CASE_PUSHED_TO_DOCTOR',
+      entityType: 'CONSULTATIONS',
+      entityId: newPushRecord.id,
+      metadata: { patient_id, doctor_name: newPushRecord.doctor_name, risk_level: newPushRecord.risk_level }
+    });
+
+    console.log(`🚨 REAL-TIME CASE PUSHED TO DOCTOR PORTAL! Patient: ${newPushRecord.patient_name} (${newPushRecord.patient_code}) & Doctor: ${newPushRecord.doctor_name}`);
+
+    return res.status(201).json({
+      message: 'Case context pushed to Doctor portal in real-time!',
+      consultation: newPushRecord,
+      room_id: roomId
+    });
+  } catch (error) {
+    console.error('Error pushing case to doctor:', error.message);
+    return res.status(500).json({ error: 'Failed to push case to doctor', details: error.message });
+  }
+};
+
 // Schedule a Video Teleconsultation Appointment
 export const scheduleConsultation = async (req, res) => {
   try {
@@ -42,7 +135,6 @@ export const scheduleConsultation = async (req, res) => {
       created_at: new Date().toISOString()
     };
 
-    // Try DB Insert
     try {
       await supabaseAdmin.from('consultations').insert([{
         visit_id: newConsultation.visit_id,
