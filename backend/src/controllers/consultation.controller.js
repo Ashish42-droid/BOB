@@ -88,6 +88,55 @@ export const pushToDoctor = async (req, res) => {
   }
 };
 
+// Emergency Call Ringtone Trigger
+export const ringCall = async (req, res) => {
+  try {
+    const {
+      patient_id,
+      patient_name,
+      patient_code,
+      visit_id,
+      village,
+      risk_level,
+      reason,
+      room_id
+    } = req.body;
+
+    const roomId = room_id || `room_${(patient_code || 'PAT').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
+
+    const newCall = {
+      id: `c_${Date.now()}`,
+      visit_id: visit_id || `v_${Date.now()}`,
+      patient_id,
+      patient_name: patient_name || 'Patient',
+      patient_code: patient_code || 'PAT-RECORD',
+      village: village || 'Primary Health Centre',
+      risk_level: (risk_level || 'HIGH').toUpperCase(),
+      scheduled_time: new Date().toISOString(),
+      mode: 'VIDEO',
+      status: 'CALL_RINGTONE_ACTIVE',
+      room_id: roomId,
+      reason: reason || 'Emergency Teleconsultation Request',
+      created_at: new Date().toISOString()
+    };
+
+    MEMORY_CONSULTATIONS.unshift(newCall);
+
+    try {
+      await supabaseAdmin.from('consultations').insert([{
+        visit_id: newCall.visit_id,
+        mode: 'VIDEO',
+        status: 'CALL_RINGTONE_ACTIVE',
+        meeting_room_id: roomId
+      }]);
+    } catch (e) {}
+
+    return res.status(201).json({ message: 'Emergency call ringtone activated for doctor', consultation: newCall, room_id: roomId });
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to trigger ringtone call', details: error.message });
+  }
+};
+
 // Explicitly Schedule a Video Teleconsultation Appointment
 export const scheduleConsultation = async (req, res) => {
   try {
@@ -153,8 +202,7 @@ export const scheduleConsultation = async (req, res) => {
     return res.status(201).json({
       message: 'Video Consultation scheduled successfully',
       consultation: newConsultation,
-      room_id: roomId,
-      zego_app_id: parseInt(config.zegoCloud.appId || '1586356449')
+      room_id: roomId
     });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to schedule consultation', details: error.message });
@@ -246,7 +294,6 @@ export const joinConsultation = async (req, res) => {
       consultation_id: id,
       room_id: roomId,
       status: 'ONGOING',
-      zego_app_id: parseInt(config.zegoCloud.appId || '1586356449'),
       user_id: req.user?.id || `user_${Date.now()}`,
       user_name: req.user?.name || (req.user?.role === 'DOCTOR' ? 'Doctor' : 'Clinic Assistant & Patient')
     });

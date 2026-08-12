@@ -7,7 +7,8 @@ import {
   createConsultation,
   startConsultation,
   endConsultation,
-  pushToDoctor
+  pushToDoctor,
+  ringCall
 } from '../controllers/consultation.controller.js';
 import { authenticateUser } from '../middleware/auth.middleware.js';
 
@@ -15,7 +16,9 @@ const router = Router();
 
 router.use(authenticateUser);
 
+router.post('/push-case', pushToDoctor);
 router.post('/push-to-doctor', pushToDoctor);
+router.post('/ring-call', ringCall);
 router.post('/schedule', scheduleConsultation);
 router.get('/', getConsultations);
 router.post('/:id/join', joinConsultation);
