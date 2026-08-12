@@ -1,8 +1,10 @@
 import React from 'react';
-import { Bot, Stethoscope, AlertTriangle, BookOpen, ShieldCheck, FileCheck2, UserCheck, Camera, FileText, Pill, Eye } from 'lucide-react';
+import { Bot, Stethoscope, AlertTriangle, BookOpen, ShieldCheck, FileCheck2, UserCheck, Camera, FileText, Pill, Eye, RefreshCw } from 'lucide-react';
 import RiskBadge from './RiskBadge';
 
 export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, prescription, documents = [], images = [] }) {
+  const isAIProcessing = aiAssessment?.processing_status === 'processing';
+
   return (
     <div className="space-y-6">
       
@@ -24,6 +26,14 @@ export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, p
             AI Data Layer
           </span>
         </div>
+
+        {/* Realtime Processing Banner */}
+        {isAIProcessing && (
+          <div className="p-4 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 flex items-center gap-2 font-medium">
+            <RefreshCw className="w-4 h-4 text-blue-600 animate-spin shrink-0" />
+            <span>AI Patient Assessment is processing in real-time... Please wait while clinical protocols are retrieved.</span>
+          </div>
+        )}
 
         {aiAssessment ? (
           <div className="space-y-4 text-xs text-slate-800">
@@ -96,7 +106,7 @@ export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, p
               </div>
             )}
 
-            {/* Injury & Clinical Wound Photo Observations (Rendering Image + Computer Vision Analysis) */}
+            {/* Injury & Clinical Wound Photo Observations */}
             {images && images.length > 0 && (
               <div className="p-4 rounded-lg bg-slate-50 border border-slate-200 space-y-3">
                 <div className="font-bold text-purple-800 flex items-center gap-1.5">
@@ -175,8 +185,9 @@ export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, p
 
           </div>
         ) : (
-          <div className="text-xs text-slate-500 italic p-4 border border-dashed border-slate-200 rounded-lg text-center">
-            No AI assessment generated for this visit yet.
+          <div className="p-4 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 flex items-center gap-2 font-medium">
+            <RefreshCw className="w-4 h-4 text-blue-600 animate-spin shrink-0" />
+            <span>AI Patient Assessment is processing or pending for this visit. Uploads will appear live once generated.</span>
           </div>
         )}
       </div>

@@ -4,6 +4,7 @@ import { Stethoscope, Video, FileText, CheckCircle2, AlertOctagon, ArrowLeft, He
 import api from '../services/api';
 import AIDoctorVisualSeparation from '../components/AIDoctorVisualSeparation';
 import VideoConsultationModal from '../components/VideoConsultationModal';
+import { supabase } from '../config/supabase';
 
 export default function DoctorCaseViewPage() {
   const { id: visitId } = useParams();
@@ -27,6 +28,31 @@ export default function DoctorCaseViewPage() {
 
   useEffect(() => {
     fetchCase();
+
+    // Supabase Realtime Subscription for Uploads, AI Assessment, and Vitals Updates
+    const channel = supabase
+      .channel(`public:case_${visitId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_assessments', filter: `visit_id=eq.${visitId}` }, (payload) => {
+        console.log('⚡ Realtime AI Assessment Payload:', payload);
+        fetchCase();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'patient_images', filter: `visit_id=eq.${visitId}` }, (payload) => {
+        console.log('⚡ Realtime Patient Image Payload:', payload);
+        fetchCase();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'patient_documents', filter: `visit_id=eq.${visitId}` }, (payload) => {
+        console.log('⚡ Realtime Patient Document Payload:', payload);
+        fetchCase();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'visit_vitals', filter: `visit_id=eq.${visitId}` }, (payload) => {
+        console.log('⚡ Realtime Visit Vitals Payload:', payload);
+        fetchCase();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [visitId]);
 
   const fetchCase = async () => {
@@ -84,11 +110,11 @@ export default function DoctorCaseViewPage() {
     }
   };
 
-  if (loading) {
+  if (loading && !visit) {
     return (
       <div className="max-w-7xl mx-auto px-4 lg:px-8 py-16 text-center text-xs text-slate-500">
         <RefreshCw className="w-5 h-5 text-blue-600 animate-spin mx-auto mb-2" />
-        Retrieving Case File from Supabase Database...
+        Retrieving Case File & Realtime Artifacts from Supabase Database...
       </div>
     );
   }

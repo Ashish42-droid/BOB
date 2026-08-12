@@ -59,6 +59,17 @@ export const getDoctorCaseDetails = async (req, res) => {
           visitData.patients.name = visitData.patients.full_name || visitData.patients.name;
           visitData.patients.age = visitData.patients.age_years || visitData.patients.age;
         }
+
+        // Map public / signed storage URLs for patient images if image_url is missing
+        if (visitData.patient_images && Array.isArray(visitData.patient_images)) {
+          visitData.patient_images = visitData.patient_images.map(img => {
+            if (!img.image_url && img.storage_bucket && img.storage_path) {
+              const { data: pubUrlData } = supabaseAdmin.storage.from(img.storage_bucket).getPublicUrl(img.storage_path);
+              img.image_url = pubUrlData?.publicUrl || img.storage_path;
+            }
+            return img;
+          });
+        }
       }
     } catch (e) {}
 
