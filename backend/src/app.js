@@ -11,6 +11,7 @@ import consultationRoutes from './routes/consultation.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import visionRoutes from './routes/vision.routes.js';
 import voiceRoutes from './routes/voice.routes.js';
+import callRoutes from './routes/call.routes.js';
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.get(['/', '/api'], (req, res) => {
       vision: '/api/vision',
       voice: '/api/voice',
       doctor: '/api/doctor',
+      calls: '/api/calls',
       consultations: '/api/consultations'
     }
   });
@@ -57,6 +59,7 @@ app.use('/api/vision', visionRoutes);
 app.use('/api/voice', voiceRoutes);
 app.use('/api/doctor', doctorRoutes);
 app.use('/api/consultations', consultationRoutes);
+app.use('/api/calls', callRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Global Error Handler

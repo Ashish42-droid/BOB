@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Stethoscope, Clock, ShieldAlert, ArrowRight, Video, User, AlertOctagon, PhoneCall, PhoneIncoming, PhoneOff, Bot, Camera, FileText, CheckCircle2, Eye, RefreshCw, AlertCircle } from 'lucide-react';
 import api from '../services/api';
 import RiskBadge from '../components/RiskBadge';
-import VideoConsultationModal from '../components/VideoConsultationModal';
+import WebRTCVideoCallModal from '../components/WebRTCVideoCallModal';
 import { supabase } from '../config/supabase';
 
 export default function DoctorQueueDashboard() {
@@ -34,11 +34,19 @@ export default function DoctorQueueDashboard() {
   useEffect(() => {
     fetchQueueAndConsultations();
 
-    // Supabase Realtime Subscription for Live Video Call Status Changes
-    const channel = supabase
+    // Stage 5: Supabase Realtime Subscriptions for Calls & Consultations Status Sync
+    const channelConsultations = supabase
       .channel('public:consultations')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'consultations' }, (payload) => {
         console.log('⚡ Supabase Realtime Consultation Payload Received:', payload);
+        fetchQueueAndConsultations();
+      })
+      .subscribe();
+
+    const channelCalls = supabase
+      .channel('public:calls')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calls' }, (payload) => {
+        console.log('⚡ Supabase Realtime Calls Payload Received:', payload);
         fetchQueueAndConsultations();
       })
       .subscribe();
@@ -47,23 +55,38 @@ export default function DoctorQueueDashboard() {
     const interval = setInterval(fetchQueueAndConsultations, 4000);
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(channelConsultations);
+      supabase.removeChannel(channelCalls);
       clearInterval(interval);
     };
   }, []);
 
   const fetchQueueAndConsultations = async () => {
     try {
-      const [qRes, cRes] = await Promise.all([
+      const [qRes, cRes, callsRes] = await Promise.all([
         api.get('/doctor/queue'),
-        api.get('/consultations').catch(() => ({ data: [] }))
+        api.get('/consultations').catch(() => ({ data: [] })),
+        api.get('/calls').catch(() => ({ data: [] }))
       ]);
 
       const consultList = (cRes.data || []).filter(c => c.status !== 'DECLINED');
+      const scheduledCalls = (callsRes.data || []).map(c => ({
+        id: c.id,
+        patient_name: c.patient_name,
+        patient_code: c.patient_code,
+        doctor_name: c.doctor_name,
+        scheduled_time: c.scheduled_time,
+        status: c.status,
+        room_id: c.room_id,
+        reason: c.reason,
+        risk_level: 'SCHEDULED'
+      }));
+
+      const mergedConsults = [...scheduledCalls, ...consultList];
       const queueList = qRes.data || [];
 
       setQueue(queueList);
-      setConsultations(consultList);
+      setConsultations(mergedConsults);
       setFetchError(null);
 
       // Check if there is an active call ringtone status pushed for doctor
@@ -94,12 +117,10 @@ export default function DoctorQueueDashboard() {
 
   const handleDoctorJoinCall = async (consultId, roomId, patientName) => {
     try {
-      if (consultId) {
-        const res = await api.post(`/consultations/${consultId}/join`).catch(() => {});
-        if (res?.data?.status === 'COMPLETED') {
-          alert('Call has already been completed.');
-          return;
-        }
+      if (consultId && String(consultId).startsWith('c_')) {
+        await api.post(`/consultations/${consultId}/join`).catch(() => {});
+      } else if (consultId) {
+        await api.patch(`/calls/${consultId}/status`, { status: 'ONGOING' }).catch(() => {});
       }
       setActiveVideoRoom({
         room_id: roomId || `room_${Date.now()}`,
@@ -121,10 +142,13 @@ export default function DoctorQueueDashboard() {
 
   const handleDeclineCall = async (consultId) => {
     try {
-      if (consultId) {
+      if (consultId && String(consultId).startsWith('c_')) {
         await api.post(`/consultations/${consultId}/decline`).catch(() => {});
+      } else if (consultId) {
+        await api.patch(`/calls/${consultId}/status`, { status: 'CANCELLED' }).catch(() => {});
       }
       setIncomingCall({ active: false });
+      fetchQueueAndConsultations();
     } catch (err) {
       setIncomingCall({ active: false });
     }
@@ -139,7 +163,7 @@ export default function DoctorQueueDashboard() {
           <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <Stethoscope className="w-5 h-5 text-blue-600" /> Remote Doctor Teleconsultation Desk
           </h1>
-          <p className="text-xs text-slate-500">Live Database Connected — Realtime Doctor Portal</p>
+          <p className="text-xs text-slate-500">Live Database Connected — Realtime WebRTC Doctor Portal</p>
         </div>
 
         {/* Doctor Specialist Selector */}
@@ -194,7 +218,7 @@ export default function DoctorQueueDashboard() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    📞 REALTIME EMERGENCY CONSULTATION REQUEST
+                    📞 REALTIME EMERGENCY WEBRTC CONSULTATION REQUEST
                   </span>
                   <RiskBadge level={incomingCall.risk_level} />
                 </div>
@@ -210,7 +234,7 @@ export default function DoctorQueueDashboard() {
                 onClick={() => handleDoctorJoinCall(incomingCall.consultation_id, incomingCall.room_id, incomingCall.patient_name)}
                 className="flex-1 md:flex-none px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
               >
-                <PhoneCall className="w-4 h-4" /> ACCEPT & JOIN VIDEO CALL
+                <PhoneCall className="w-4 h-4" /> ACCEPT & JOIN WEBRTC CALL
               </button>
               <button
                 onClick={() => handleDeclineCall(incomingCall.consultation_id)}
@@ -287,53 +311,66 @@ export default function DoctorQueueDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Video className="w-5 h-5 text-purple-600" /> Scheduled Video Calls & Consultations
+                <Video className="w-5 h-5 text-purple-600" /> Scheduled WebRTC Teleconsultations
               </h2>
-              <p className="text-xs text-slate-500">Doctor receives calls at scheduled time from village sub-centre assistant & patient.</p>
+              <p className="text-xs text-slate-500">Doctor joins calls at scheduled time from village sub-centre assistant & patient.</p>
             </div>
           </div>
 
           {consultations.length === 0 ? (
             <div className="p-8 text-center text-slate-500 text-xs border border-dashed border-slate-200 rounded-lg">
-              No scheduled video calls pending in database.
+              No scheduled teleconsultation calls pending in database.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {consultations.map((c) => (
-                <div key={c.id} className="p-4 rounded-lg bg-slate-50 border border-slate-200 flex flex-col justify-between space-y-3">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <RiskBadge level={c.risk_level || 'MODERATE'} />
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${c.status === 'ONGOING' ? 'bg-emerald-100 text-emerald-800 animate-pulse' : 'bg-slate-200 text-slate-700'}`}>
-                        {c.status === 'ONGOING' ? '🟢 IN PROGRESS' : (c.status || 'SCHEDULED')}
-                      </span>
+              {consultations.map((c) => {
+                const schedDate = new Date(c.scheduled_time || Date.now());
+                const now = new Date();
+                // Join button is joinable at/near scheduled time (within 15 mins) or if ONGOING
+                const isNearScheduledTime = Math.abs(now.getTime() - schedDate.getTime()) <= 15 * 60 * 1000 || c.status === 'ONGOING';
+
+                return (
+                  <div key={c.id} className="p-4 rounded-lg bg-slate-50 border border-slate-200 flex flex-col justify-between space-y-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <RiskBadge level={c.risk_level || 'MODERATE'} />
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${c.status === 'ONGOING' ? 'bg-emerald-100 text-emerald-800 animate-pulse' : 'bg-slate-200 text-slate-700'}`}>
+                          {c.status === 'ONGOING' ? '🟢 IN PROGRESS' : (c.status || 'SCHEDULED')}
+                        </span>
+                      </div>
+
+                      <div className="font-bold text-sm text-slate-900">{c.patient_name}</div>
+                      <div className="text-xs text-slate-500">Code: <strong className="text-blue-600">{c.patient_code}</strong></div>
+                      <div className="text-xs text-slate-700 mt-1 font-medium">{c.reason || 'Follow-up Consultation'}</div>
+                      <div className="text-xs text-slate-600 mt-1">Doctor: {c.doctor_name || selectedDoctor}</div>
+                      <div className="text-xs text-amber-700 flex items-center gap-1 mt-1 font-medium">
+                        <Clock className="w-3.5 h-3.5" /> Scheduled: {schedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ({schedDate.toLocaleDateString()})
+                      </div>
                     </div>
 
-                    <div className="font-bold text-sm text-slate-900">{c.patient_name}</div>
-                    <div className="text-xs text-slate-500">Code: <strong className="text-blue-600">{c.patient_code}</strong></div>
-                    <div className="text-xs text-slate-700 mt-1 font-medium">{c.reason || 'Follow-up Consultation'}</div>
-                    <div className="text-xs text-slate-600 mt-1">Doctor: {c.doctor_name || selectedDoctor}</div>
-                    <div className="text-xs text-amber-700 flex items-center gap-1 mt-1 font-medium">
-                      <Clock className="w-3.5 h-3.5" /> Scheduled: {new Date(c.scheduled_time || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleDoctorJoinCall(c.id, c.room_id, c.patient_name)}
+                        disabled={!isNearScheduledTime && c.status !== 'ONGOING'}
+                        className={`flex-1 py-2 rounded-lg font-semibold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-colors ${
+                          isNearScheduledTime || c.status === 'ONGOING'
+                            ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+                            : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                        }`}
+                        title={!isNearScheduledTime ? 'Join Call is only joinable at/near scheduled time' : 'Join Call'}
+                      >
+                        <PhoneCall className="w-3.5 h-3.5" /> {isNearScheduledTime ? 'JOIN WEBRTC CALL' : 'LOCKED UNTIL TIME'}
+                      </button>
+                      <button
+                        onClick={() => handleDeclineCall(c.id)}
+                        className="px-3 py-2 rounded-lg bg-white hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-300 font-semibold text-xs transition-colors"
+                      >
+                        DECLINE
+                      </button>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleDoctorJoinCall(c.id, c.room_id, c.patient_name)}
-                      className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-colors"
-                    >
-                      <PhoneCall className="w-3.5 h-3.5" /> JOIN VIDEO CALL
-                    </button>
-                    <button
-                      onClick={() => handleDeclineCall(c.id)}
-                      className="px-3 py-2 rounded-lg bg-white hover:bg-red-50 hover:text-red-600 text-slate-600 border border-slate-300 font-semibold text-xs transition-colors"
-                    >
-                      DECLINE
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -386,7 +423,7 @@ export default function DoctorQueueDashboard() {
                       onClick={() => handleDoctorJoinCall(item.id, `room_${item.id}`, pName)}
                       className="px-3.5 py-2 rounded-lg bg-slate-100 hover:bg-purple-50 hover:text-purple-700 text-slate-700 border border-slate-200 font-semibold text-xs flex items-center gap-1.5 transition-colors"
                     >
-                      <Video className="w-3.5 h-3.5 text-purple-600" /> Start Video Call
+                      <Video className="w-3.5 h-3.5 text-purple-600" /> Start WebRTC Call
                     </button>
 
                     <button
@@ -403,13 +440,14 @@ export default function DoctorQueueDashboard() {
         </div>
       )}
 
-      {/* ZEGO CLOUD DOCTOR VIDEO CONSULTATION MODAL */}
+      {/* PURE WEBRTC DOCTOR VIDEO CONSULTATION MODAL */}
       {activeVideoRoom && (
-        <VideoConsultationModal
+        <WebRTCVideoCallModal
           roomId={activeVideoRoom.room_id}
-          userName={activeVideoRoom.user_name}
-          userId={activeVideoRoom.user_id}
-          patientName={activeVideoRoom.patient_name}
+          userName={activeVideoRoom.user_name || selectedDoctor}
+          userId={activeVideoRoom.user_id || `doc_${Date.now()}`}
+          role="DOCTOR"
+          peerName={activeVideoRoom.patient_name || 'Patient & Clinic Assistant'}
           onClose={() => setActiveVideoRoom(null)}
         />
       )}
