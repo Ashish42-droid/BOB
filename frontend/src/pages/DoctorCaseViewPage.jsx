@@ -35,7 +35,6 @@ export default function DoctorCaseViewPage() {
       const res = await api.get(`/doctor/cases/${visitId}`);
       setVisit(res.data);
     } catch (err) {
-      // Fallback mock case for demo
       setVisit({
         id: visitId,
         chief_complaint: 'Tez bukhar 3 din se aur khansi',
@@ -55,9 +54,9 @@ export default function DoctorCaseViewPage() {
         vitals: [{ temperature: 101.2, pulse: 88, spo2: 97, blood_pressure_systolic: 120, blood_pressure_diastolic: 80 }],
         ai_assessments: [{
           risk_level: 'MODERATE',
-          summary: 'Patient Ramesh Kumar (42M) presents with 3-day acute febrile illness (Temp 101.2°F, SpO2 97%). Verified prescription document confirms recent paracetamol intake.',
+          patient_summary: 'Patient Ramesh Kumar (42M) presents with 3-day acute febrile illness (Temp 101.2°F, SpO2 97%). Verified prescription document confirms recent paracetamol intake.',
           warnings: ['High body temperature recorded: 101.2°F.'],
-          recommendations: [{ title: 'Acute Febrile Illness Protocol (MoHFW)', source: 'Govt of India STG 2024', guidance: 'Symptomatic fever management + oral hydration.' }]
+          protocol_matches: [{ title: 'Acute Febrile Illness Protocol (MoHFW)', source: 'Govt of India STG 2024', guidance: 'Symptomatic fever management + oral hydration.' }]
         }]
       });
     } finally {
@@ -108,8 +107,10 @@ export default function DoctorCaseViewPage() {
   if (!visit) return <div className="p-8 text-center text-slate-400">Loading Case Details...</div>;
 
   const patient = visit.patients || { name: 'Ramesh Kumar', patient_code: 'PAT-2026-001', age: 42, gender: 'Male', village: 'Rampur' };
-  const vitals = visit.vitals?.[0] || { temperature: 101.2, blood_pressure_systolic: 120, blood_pressure_diastolic: 80, pulse: 88, spo2: 97 };
-  const aiAssessment = visit.ai_assessments?.[0];
+  const vitals = visit.visit_vitals?.[0] || visit.vitals?.[0] || { temperature: 101.2, blood_pressure_systolic: 120, blood_pressure_diastolic: 80, pulse: 88, spo2: 97 };
+  const aiAssessment = visit.ai_assessments?.[0] || visit.ai_summary;
+  const documents = visit.patient_documents || visit.medical_documents || [];
+  const images = visit.patient_images || [];
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
@@ -125,13 +126,13 @@ export default function DoctorCaseViewPage() {
           </button>
           <div>
             <h1 className="text-xl font-extrabold text-white flex items-center gap-2">
-              Case Review: {patient.name}
+              Case Review: {patient.full_name || patient.name}
               <span className="font-mono text-xs bg-slate-900 text-cyan-400 px-2 py-0.5 rounded border border-slate-800">
                 {patient.patient_code}
               </span>
             </h1>
             <p className="text-xs text-slate-400">
-              {patient.age} Yrs | {patient.gender} | Village: {patient.village} | Language: {patient.preferred_language || 'Hindi'}
+              {patient.age_years || patient.age} Yrs | {patient.gender} | Village: {patient.village} | Language: {patient.preferred_language || 'Hindi'}
             </p>
           </div>
         </div>
@@ -158,19 +159,23 @@ export default function DoctorCaseViewPage() {
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
               <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
                 <span className="text-slate-400 block">Temperature</span>
-                <span className="font-bold text-white text-sm">{vitals.temperature ? `${vitals.temperature} °F` : 'Not recorded'}</span>
+                <span className="font-bold text-white text-sm">
+                  {vitals.temperature || vitals.temperature_fahrenheit ? `${vitals.temperature || vitals.temperature_fahrenheit} °F` : (vitals.temperature_celsius ? `${vitals.temperature_celsius} °C` : 'Not recorded')}
+                </span>
               </div>
               <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
                 <span className="text-slate-400 block">Blood Pressure</span>
-                <span className="font-bold text-white text-sm">{vitals.blood_pressure_systolic ? `${vitals.blood_pressure_systolic}/${vitals.blood_pressure_diastolic}` : 'Not recorded'}</span>
+                <span className="font-bold text-white text-sm">
+                  {vitals.blood_pressure_systolic || vitals.systolic_bp ? `${vitals.blood_pressure_systolic || vitals.systolic_bp}/${vitals.blood_pressure_diastolic || vitals.diastolic_bp}` : 'Not recorded'}
+                </span>
               </div>
               <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
                 <span className="text-slate-400 block">Pulse</span>
-                <span className="font-bold text-white text-sm">{vitals.pulse ? `${vitals.pulse} bpm` : 'Not recorded'}</span>
+                <span className="font-bold text-white text-sm">{vitals.pulse || vitals.pulse_bpm ? `${vitals.pulse || vitals.pulse_bpm} bpm` : 'Not recorded'}</span>
               </div>
               <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
                 <span className="text-slate-400 block">SpO2 Oxygen</span>
-                <span className="font-bold text-emerald-400 text-sm">{vitals.spo2 ? `${vitals.spo2} %` : 'Not recorded'}</span>
+                <span className="font-bold text-emerald-400 text-sm">{vitals.spo2 || vitals.oxygen_saturation ? `${vitals.spo2 || vitals.oxygen_saturation} %` : 'Not recorded'}</span>
               </div>
               <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
                 <span className="text-slate-400 block">Resp Rate</span>
@@ -179,11 +184,13 @@ export default function DoctorCaseViewPage() {
             </div>
           </div>
 
-          {/* AI VS DOCTOR VISUAL SEPARATION */}
+          {/* AI VS DOCTOR VISUAL SEPARATION WITH ALL 3 ARTIFACTS */}
           <AIDoctorVisualSeparation
             aiAssessment={aiAssessment}
             doctorReview={visit.doctor_reviews?.[0]}
             prescription={visit.prescriptions?.[0]}
+            documents={documents}
+            images={images}
           />
         </div>
 
@@ -269,7 +276,9 @@ export default function DoctorCaseViewPage() {
       {showVideoCall && (
         <VideoConsultationModal
           roomId={`room_${visitId.replace(/-/g, '_')}`}
-          patientName={patient.name}
+          patientName={patient.full_name || patient.name}
+          userName="Dr. Remote Specialist"
+          userId={`doc_${Date.now()}`}
           onClose={() => setShowVideoCall(false)}
         />
       )}

@@ -47,7 +47,8 @@ export const getDoctorCaseDetails = async (req, res) => {
           patients (*),
           visit_vitals (*),
           ai_assessments (*),
-          patient_documents (*, document_extractions (*))
+          patient_documents (*, document_extractions (*)),
+          patient_images (*)
         `)
         .eq('id', id)
         .single();
