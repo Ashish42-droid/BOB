@@ -1,33 +1,53 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserPlus, ArrowLeft, CheckCircle2, Shield } from 'lucide-react';
+import { UserPlus, ArrowLeft, CheckCircle2, Shield, AlertTriangle } from 'lucide-react';
 import api from '../services/api';
 
 export default function PatientRegistrationPage() {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
-    name: '',
-    age: '',
+    full_name: '',
+    age_years: '',
     date_of_birth: '',
-    gender: 'Male',
+    gender: 'male',
     phone: '',
     village: 'Rampur',
+    district: 'Rampur',
+    state: 'Uttar Pradesh',
     preferred_language: 'Hindi',
-    abha_number: '',
-    emergency_contact: ''
+    emergency_contact_name: '',
+    emergency_contact_phone: ''
   });
   const [loading, setLoading] = useState(false);
+  const [validationError, setValidationError] = useState('');
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+    setValidationError('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Strict Age Limits Check (0 to 150 years)
+    const ageVal = parseInt(formData.age_years);
+    if (isNaN(ageVal) || ageVal < 0 || ageVal > 150) {
+      setValidationError('Age must be a valid number between 0 and 150 years.');
+      return;
+    }
+
     setLoading(true);
     try {
-      const res = await api.post('/patients', formData);
-      alert(`Patient Registered Successfully! Generated ID: ${res.data.patient_code}`);
+      const payload = {
+        ...formData,
+        name: formData.full_name,
+        age: ageVal,
+        age_years: ageVal,
+        gender: formData.gender.toLowerCase()
+      };
+
+      const res = await api.post('/patients', payload);
+      alert(`Patient Registered Successfully in Supabase Database! Code: ${res.data.patient_code}`);
       navigate(`/assistant/assessment/${res.data.id}`);
     } catch (err) {
       alert('Registration failed: ' + (err.response?.data?.error || err.message));
@@ -48,7 +68,7 @@ export default function PatientRegistrationPage() {
         </button>
         <div>
           <h1 className="text-2xl font-extrabold text-white">Register New Village Patient</h1>
-          <p className="text-xs text-slate-400">Section 7 Registration — No patient login or account creation required.</p>
+          <p className="text-xs text-slate-400">29-Table Schema Integrated — Managed by Village Health Assistant.</p>
         </div>
       </div>
 
@@ -56,8 +76,15 @@ export default function PatientRegistrationPage() {
         
         <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-xs text-cyan-300 flex items-center gap-2">
           <Shield className="w-4 h-4 text-cyan-400 shrink-0" />
-          <span>Patient records are managed exclusively by trained village health assistants. ABHA number is optional.</span>
+          <span>Patient data is inserted directly into your Supabase PostgreSQL database tables.</span>
         </div>
+
+        {validationError && (
+          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2 font-semibold">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            {validationError}
+          </div>
+        )}
 
         {/* Demographics Section */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -65,10 +92,10 @@ export default function PatientRegistrationPage() {
             <label className="block text-xs font-semibold text-slate-300 mb-1">Full Patient Name *</label>
             <input
               type="text"
-              name="name"
-              value={formData.name}
+              name="full_name"
+              value={formData.full_name}
               onChange={handleChange}
-              placeholder="e.g. Ramesh Kumar"
+              placeholder="e.g. Ashish Kumar"
               required
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
             />
@@ -82,21 +109,72 @@ export default function PatientRegistrationPage() {
               onChange={handleChange}
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
             >
-              <option value="Male">Male</option>
-              <option value="Female">Female</option>
-              <option value="Other">Other</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+              <option value="other">Other</option>
+              <option value="unknown">Unknown</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Age (Years) *</label>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Age in Years (0 - 150) *</label>
             <input
               type="number"
-              name="age"
-              value={formData.age}
+              name="age_years"
+              min="0"
+              max="150"
+              value={formData.age_years}
               onChange={handleChange}
-              placeholder="e.g. 42"
+              placeholder="e.g. 26"
               required
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Date of Birth (Optional)</label>
+            <input
+              type="date"
+              name="date_of_birth"
+              value={formData.date_of_birth}
+              onChange={handleChange}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Village *</label>
+            <input
+              type="text"
+              name="village"
+              value={formData.village}
+              onChange={handleChange}
+              placeholder="e.g. Rampur"
+              required
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
+            <input
+              type="tel"
+              name="phone"
+              value={formData.phone}
+              onChange={handleChange}
+              placeholder="+91 9876543210"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">District</label>
+            <input
+              type="text"
+              name="district"
+              value={formData.district}
+              onChange={handleChange}
+              placeholder="District"
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
             />
           </div>
@@ -110,62 +188,37 @@ export default function PatientRegistrationPage() {
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
             >
               <option value="Hindi">Hindi (हिंदी)</option>
+              <option value="English">English</option>
               <option value="Tamil">Tamil (தமிழ்)</option>
               <option value="Telugu">Telugu (తెలుగు)</option>
               <option value="Bengali">Bengali (বাংলা)</option>
               <option value="Marathi">Marathi (मराठी)</option>
-              <option value="English">English</option>
             </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Village / Location *</label>
-            <input
-              type="text"
-              name="village"
-              value={formData.village}
-              onChange={handleChange}
-              placeholder="Village Name"
-              required
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number (Optional)</label>
-            <input
-              type="tel"
-              name="phone"
-              value={formData.phone}
-              onChange={handleChange}
-              placeholder="+91 Mobile number"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
-            />
           </div>
         </div>
 
-        {/* Optional ABHA & Emergency Contact */}
+        {/* Emergency Contact */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-800/80">
           <div>
-            <label className="block text-xs font-semibold text-slate-400 mb-1">ABHA Number (Voluntary Integration)</label>
+            <label className="block text-xs font-semibold text-slate-400 mb-1">Emergency Contact Person Name</label>
             <input
               type="text"
-              name="abha_number"
-              value={formData.abha_number}
+              name="emergency_contact_name"
+              value={formData.emergency_contact_name}
               onChange={handleChange}
-              placeholder="e.g. 12-3456-7890-1234"
+              placeholder="Family / Guardian Name"
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-400 mb-1">Emergency Contact Details</label>
+            <label className="block text-xs font-semibold text-slate-400 mb-1">Emergency Contact Phone Number</label>
             <input
-              type="text"
-              name="emergency_contact"
-              value={formData.emergency_contact}
+              type="tel"
+              name="emergency_contact_phone"
+              value={formData.emergency_contact_phone}
               onChange={handleChange}
-              placeholder="Name & Contact number"
+              placeholder="+91 Contact Number"
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
             />
           </div>

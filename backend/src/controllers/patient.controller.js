@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { logAuditEvent } from '../middleware/audit.middleware.js';
 
-// Real-Time In-Memory Patient Persistence Cache
+// Real-Time In-Memory Fallback Cache
 let MEMORY_PATIENTS = [];
 
 // Helper to generate unique Patient Code
@@ -14,32 +14,51 @@ export const createPatient = async (req, res) => {
   try {
     const {
       name,
+      full_name,
       date_of_birth,
       age,
-      gender,
+      age_years,
+      gender = 'unknown',
       phone,
       village,
+      district = 'Rampur',
+      state = 'Uttar Pradesh',
       preferred_language = 'Hindi',
-      abha_number,
+      emergency_contact_name,
+      emergency_contact_phone,
       emergency_contact
     } = req.body;
 
-    if (!name || !gender || !village) {
-      return res.status(400).json({ error: 'Patient name, gender, and village are required.' });
+    const patientName = full_name || name;
+    if (!patientName || !village) {
+      return res.status(400).json({ error: 'Patient full_name and village are required.' });
     }
 
     const patient_code = generatePatientCode();
 
+    // Map gender enum safely to lowercase ('male', 'female', 'other', 'unknown')
+    const safeGender = (gender || 'unknown').toLowerCase();
+    const validGender = ['male', 'female', 'other', 'unknown'].includes(safeGender) ? safeGender : 'unknown';
+
+    // Parse age safely (0 to 150)
+    const parsedAge = age_years ? parseInt(age_years) : (age ? parseInt(age) : 35);
+    if (parsedAge < 0 || parsedAge > 150) {
+      return res.status(400).json({ error: 'Age must be between 0 and 150 years.' });
+    }
+
     const patientRecord = {
       patient_code,
-      name,
-      age: age ? parseInt(age) : 35,
-      gender,
+      full_name: patientName,
+      date_of_birth: date_of_birth || null,
+      age_years: parsedAge,
+      gender: validGender,
       phone: phone || null,
       village,
-      preferred_language: preferred_language || 'Hindi',
-      abha_number: abha_number || null,
-      emergency_contact: emergency_contact || null
+      district,
+      state,
+      preferred_language,
+      emergency_contact_name: emergency_contact_name || emergency_contact || null,
+      emergency_contact_phone: emergency_contact_phone || null
     };
 
     let newPatient = null;
@@ -52,12 +71,9 @@ export const createPatient = async (req, res) => {
       
       if (!error && data) {
         newPatient = data;
-        console.log(`🎉 REAL-TIME SUPABASE DATABASE INSERT SUCCESSFUL! ID: ${newPatient.id} (${newPatient.name})`);
+        console.log(`🎉 SUPABASE DATABASE PATIENT INSERTED! ID: ${newPatient.id} (${newPatient.full_name})`);
       } else if (error) {
-        console.error(`⚠️ SUPABASE DATABASE INSERT REJECTED:`, error.message);
-        if (error.code === 'PGRST205') {
-          console.error(`📌 REASON: The 'patients' table does not exist in your Supabase SQL database yet. Run schema in Supabase SQL Editor.`);
-        }
+        console.warn(`⚠️ Supabase Patient Insert Warning:`, error.message);
       }
     } catch (e) {
       console.warn('Supabase DB patient insert exception:', e.message);
@@ -67,22 +83,26 @@ export const createPatient = async (req, res) => {
       newPatient = {
         id: `pt_${Date.now()}`,
         patient_code,
-        name,
+        full_name: patientName,
+        name: patientName,
         date_of_birth: date_of_birth || null,
-        age: age ? parseInt(age) : 35,
-        gender,
+        age_years: parsedAge,
+        age: parsedAge,
+        gender: validGender,
         phone: phone || null,
         village,
-        preferred_language: preferred_language || 'Hindi',
-        abha_number: abha_number || null,
-        emergency_contact: emergency_contact || null,
+        district,
+        state,
+        preferred_language,
+        emergency_contact_name: emergency_contact_name || emergency_contact || null,
+        emergency_contact_phone: emergency_contact_phone || null,
         created_at: new Date().toISOString()
       };
     }
 
     // Unshift to real-time memory store
     MEMORY_PATIENTS.unshift(newPatient);
-    console.log(`✅ Patient registered & saved! Code: ${newPatient.patient_code} (${newPatient.name})`);
+    console.log(`✅ Patient registered & saved! Code: ${newPatient.patient_code} (${newPatient.full_name || newPatient.name})`);
 
     logAuditEvent({
       actorId: req.user?.id || 'assistant_001',
@@ -90,7 +110,7 @@ export const createPatient = async (req, res) => {
       action: 'PATIENT_CREATED',
       entityType: 'PATIENTS',
       entityId: newPatient.id,
-      metadata: { patient_code, name, village }
+      metadata: { patient_code, name: patientName, village }
     });
 
     return res.status(201).json(newPatient);
@@ -116,7 +136,12 @@ export const getPatients = async (req, res) => {
     // Combine DB patients with in-memory patients, removing duplicates
     const combinedMap = new Map();
     MEMORY_PATIENTS.forEach(p => combinedMap.set(p.id, p));
-    dbPatients.forEach(p => combinedMap.set(p.id, p));
+    dbPatients.forEach(p => {
+      // Standardize name and age properties for UI compatibility
+      p.name = p.full_name || p.name;
+      p.age = p.age_years || p.age;
+      combinedMap.set(p.id, p);
+    });
 
     const result = Array.from(combinedMap.values());
 
@@ -124,7 +149,7 @@ export const getPatients = async (req, res) => {
     if (query) {
       const q = query.toLowerCase();
       return res.json(result.filter(p =>
-        (p.name || '').toLowerCase().includes(q) ||
+        (p.full_name || p.name || '').toLowerCase().includes(q) ||
         (p.patient_code || '').toLowerCase().includes(q) ||
         (p.village || '').toLowerCase().includes(q)
       ));
@@ -143,7 +168,11 @@ export const getPatientById = async (req, res) => {
     let patient = null;
     try {
       const { data } = await supabaseAdmin.from('patients').select('*').eq('id', id).single();
-      if (data) patient = data;
+      if (data) {
+        patient = data;
+        patient.name = patient.full_name || patient.name;
+        patient.age = patient.age_years || patient.age;
+      }
     } catch (e) {}
 
     if (!patient) {
@@ -168,7 +197,7 @@ export const getPatientHistory = async (req, res) => {
     try {
       const { data } = await supabaseAdmin
         .from('visits')
-        .select('*')
+        .select('*, visit_vitals(*), ai_assessments(*)')
         .eq('patient_id', id)
         .order('created_at', { ascending: false });
       if (data) visits = data;

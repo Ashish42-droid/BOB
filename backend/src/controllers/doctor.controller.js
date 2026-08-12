@@ -10,12 +10,19 @@ export const getDoctorQueue = async (req, res) => {
         .select(`
           *,
           patients (*),
+          visit_vitals (*),
           ai_assessments (*)
         `)
         .order('created_at', { ascending: false });
 
       if (!error && data) {
-        queue = data;
+        queue = data.map(item => {
+          if (item.patients) {
+            item.patients.name = item.patients.full_name || item.patients.name;
+            item.patients.age = item.patients.age_years || item.patients.age;
+          }
+          return item;
+        });
       }
     } catch (e) {
       console.warn('Queue fetch error:', e.message);
@@ -38,17 +45,24 @@ export const getDoctorCaseDetails = async (req, res) => {
         .select(`
           *,
           patients (*),
-          vitals (*),
+          visit_vitals (*),
           ai_assessments (*),
-          medical_documents (*, document_extractions (*))
+          patient_documents (*, document_extractions (*))
         `)
         .eq('id', id)
         .single();
-      if (data) visitData = data;
+
+      if (data) {
+        visitData = data;
+        if (visitData.patients) {
+          visitData.patients.name = visitData.patients.full_name || visitData.patients.name;
+          visitData.patients.age = visitData.patients.age_years || visitData.patients.age;
+        }
+      }
     } catch (e) {}
 
     if (!visitData) {
-      return res.status(404).json({ error: 'Visit case file not found' });
+      return res.status(404).json({ error: 'Visit case file not found in database' });
     }
 
     return res.json(visitData);
@@ -83,7 +97,7 @@ export const recordDoctorReview = async (req, res) => {
     };
 
     try {
-      await supabaseAdmin.from('visits').update({ status: 'COMPLETED' }).eq('id', visit_id);
+      await supabaseAdmin.from('visits').update({ status: 'completed' }).eq('id', visit_id);
     } catch (e) {}
 
     logAuditEvent({
@@ -104,6 +118,16 @@ export const recordDoctorReview = async (req, res) => {
 export const referPatientToHospital = async (req, res) => {
   try {
     const { visit_id, referral_hospital, urgency = 'HIGH', notes } = req.body;
+    
+    try {
+      await supabaseAdmin.from('referrals').insert([{
+        visit_id,
+        referral_urgency: (urgency || 'urgent').toLowerCase(),
+        destination_facility: referral_hospital || 'District Hospital',
+        reason: notes || 'Urgent specialist escalation required'
+      }]);
+    } catch (e) {}
+
     return res.json({
       message: 'Patient referred to hospital emergency successfully',
       referral: { visit_id, referral_hospital, urgency, notes }

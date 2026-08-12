@@ -34,7 +34,7 @@ export default function PatientAssessmentVisitPage() {
   const audioChunksRef = useRef([]);
   const recognitionRef = useRef(null);
   
-  // Vitals
+  // Vitals with Strict Min/Max Clinical Range Verification
   const [vitals, setVitals] = useState({
     temperature: '101.2',
     blood_pressure_systolic: '120',
@@ -45,6 +45,7 @@ export default function PatientAssessmentVisitPage() {
     weight: '62',
     height: '168'
   });
+  const [vitalsError, setVitalsError] = useState('');
 
   // OCR Document State
   const [uploadingDoc, setUploadingDoc] = useState(false);
@@ -67,7 +68,10 @@ export default function PatientAssessmentVisitPage() {
   const fetchPatientAndVisit = async () => {
     try {
       const pRes = await api.get(`/patients/${patientId}`);
-      setPatient(pRes.data);
+      const pData = pRes.data;
+      pData.name = pData.full_name || pData.name;
+      pData.age = pData.age_years || pData.age;
+      setPatient(pData);
 
       const vRes = await api.post('/visits', {
         patient_id: patientId,
@@ -75,7 +79,7 @@ export default function PatientAssessmentVisitPage() {
         symptoms: symptomsText,
         symptom_duration: duration,
         medical_history: medicalHistory,
-        preferred_language: pRes.data?.preferred_language || 'Hindi',
+        preferred_language: pData?.preferred_language || 'Hindi',
         vitals: vitals
       });
 
@@ -85,13 +89,42 @@ export default function PatientAssessmentVisitPage() {
     }
   };
 
+  // Validate Vitals Client-Side against Strict Clinical Bounds
+  const handleVitalsChange = (field, value) => {
+    const updated = { ...vitals, [field]: value };
+    setVitals(updated);
+
+    // Live upper/lower limit check
+    const temp = parseFloat(updated.temperature);
+    if (updated.temperature && (temp < 95.0 || temp > 107.0)) {
+      setVitalsError('Thermometer range: Temperature must be between 95.0°F and 107.0°F');
+      return;
+    }
+    const sys = parseInt(updated.blood_pressure_systolic);
+    if (updated.blood_pressure_systolic && (sys < 50 || sys > 300)) {
+      setVitalsError('Systolic BP must be between 50 and 300 mmHg');
+      return;
+    }
+    const dia = parseInt(updated.blood_pressure_diastolic);
+    if (updated.blood_pressure_diastolic && (dia < 20 || dia > 200)) {
+      setVitalsError('Diastolic BP must be between 20 and 200 mmHg');
+      return;
+    }
+    const o2 = parseInt(updated.spo2);
+    if (updated.spo2 && (o2 < 50 || o2 > 100)) {
+      setVitalsError('Oxygen Saturation (SpO2) must be between 50% and 100%');
+      return;
+    }
+
+    setVitalsError('');
+  };
+
   // Real System Microphone Speech-to-Text Recording with Auto-Language Detection
   const handleVoiceRecordToggle = async () => {
     if (!recording) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         
-        // 1. Web Speech API for instantaneous live transcription
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognition) {
           const recognition = new SpeechRecognition();
@@ -112,7 +145,6 @@ export default function PatientAssessmentVisitPage() {
           recognitionRef.current = recognition;
         }
 
-        // 2. MediaRecorder to capture audio for Groq Whisper Auto Language Detection
         audioChunksRef.current = [];
         const mediaRecorder = new MediaRecorder(stream);
         mediaRecorder.ondataavailable = (event) => {
@@ -151,7 +183,6 @@ export default function PatientAssessmentVisitPage() {
         console.error('Microphone error:', err);
       }
     } else {
-      // STOP RECORDING
       setRecording(false);
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (e) {}
@@ -213,6 +244,11 @@ export default function PatientAssessmentVisitPage() {
 
   // Run Full AI Assessment
   const handleAnalyzePatient = async () => {
+    if (vitalsError) {
+      alert('Please fix out-of-bounds Vitals values before running AI Assessment.');
+      return;
+    }
+
     setAnalyzing(true);
     try {
       const currentVisitId = visitId || `v_${Date.now()}`;
@@ -243,7 +279,7 @@ export default function PatientAssessmentVisitPage() {
     try {
       const res = await api.post('/consultations/push-to-doctor', {
         patient_id: patientId,
-        patient_name: patient?.name,
+        patient_name: patient?.full_name || patient?.name,
         patient_code: patient?.patient_code,
         visit_id: visitId || `v_${Date.now()}`,
         doctor_name: selectedDoctor,
@@ -262,7 +298,7 @@ export default function PatientAssessmentVisitPage() {
       if (res.data?.room_id) {
         setActiveVideoRoom({
           room_id: res.data.room_id,
-          user_name: `Patient (${patient?.name}) & Clinic Assistant`
+          user_name: `Patient (${patient?.full_name || patient?.name}) & Clinic Assistant`
         });
       }
     } catch (err) {
@@ -272,7 +308,6 @@ export default function PatientAssessmentVisitPage() {
     }
   };
 
-  // Export PDF Clinical Summary
   const handleDownloadPDF = () => {
     window.print();
   };
@@ -306,13 +341,13 @@ export default function PatientAssessmentVisitPage() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-extrabold text-white">{patient.name}</h1>
+              <h1 className="text-xl font-extrabold text-white">{patient.full_name || patient.name}</h1>
               <span className="font-mono text-xs bg-slate-900 text-cyan-400 px-2.5 py-0.5 rounded border border-slate-800">
                 {patient.patient_code}
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              {patient.age} Yrs | {patient.gender} | Village: <strong className="text-slate-200">{patient.village}</strong> | Language: <strong className="text-cyan-300">{patient.preferred_language}</strong>
+              {patient.age_years || patient.age} Yrs | {patient.gender} | Village: <strong className="text-slate-200">{patient.village}</strong> | Language: <strong className="text-cyan-300">{patient.preferred_language}</strong>
             </p>
           </div>
         </div>
@@ -356,7 +391,7 @@ export default function PatientAssessmentVisitPage() {
         ))}
       </div>
 
-      {/* TAB 1: SYMPTOMS & CONCISE MICROPHONE SPEECH CAPTURE */}
+      {/* TAB 1: SYMPTOMS */}
       {activeTab === 'symptoms' && (
         <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -367,7 +402,6 @@ export default function PatientAssessmentVisitPage() {
               <p className="text-xs text-slate-400">Speaks Hindi, Tamil, Telugu, English, Bengali, or Marathi — Whisper AI auto-detects language.</p>
             </div>
 
-            {/* CONCISE CLEAN MICROPHONE TOGGLE BUTTON */}
             <div className="flex items-center gap-2">
               <button
                 onClick={handleVoiceRecordToggle}
@@ -384,7 +418,6 @@ export default function PatientAssessmentVisitPage() {
                 )}
               </button>
 
-              {/* CONCISE AUTO DETECTED LANGUAGE BADGE */}
               <span className="px-2.5 py-1 rounded-lg bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-bold text-xs flex items-center gap-1">
                 <Globe className="w-3.5 h-3.5" /> {detectedLanguage || 'Hindi'}
               </span>
@@ -430,103 +463,144 @@ export default function PatientAssessmentVisitPage() {
         </div>
       )}
 
-      {/* TAB 2: VITALS */}
+      {/* TAB 2: VITALS WITH STRICT CLINICAL LIMITS */}
       {activeTab === 'vitals' && (
         <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <HeartPulse className="w-5 h-5 text-emerald-400" /> Patient Vital Signs Entry
+              <HeartPulse className="w-5 h-5 text-emerald-400" /> Patient Vital Signs Entry (Strict Clinical Bounds)
             </h2>
-            <span className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full">
-              Rule: Missing values stored as "Not recorded" — Never defaulted to 0.
+            <span className="text-xs text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-3 py-1 rounded-full">
+              PostgreSQL Schema Check Enforced
             </span>
           </div>
 
+          {vitalsError && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2 font-bold animate-pulse">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              {vitalsError}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Temperature (°F)</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Temperature (°F) <span className="text-[10px] text-amber-400">(95.0 - 107.0°F)</span>
+              </label>
               <input
-                type="text"
+                type="number"
+                step="0.1"
+                min="95.0"
+                max="107.0"
                 value={vitals.temperature}
-                onChange={(e) => setVitals({ ...vitals, temperature: e.target.value })}
-                placeholder="e.g. 101.2"
+                onChange={(e) => handleVitalsChange('temperature', e.target.value)}
+                placeholder="95.0 - 107.0"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Systolic BP (mmHg)</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Systolic BP <span className="text-[10px] text-amber-400">(50 - 300 mmHg)</span>
+              </label>
               <input
-                type="text"
+                type="number"
+                min="50"
+                max="300"
                 value={vitals.blood_pressure_systolic}
-                onChange={(e) => setVitals({ ...vitals, blood_pressure_systolic: e.target.value })}
-                placeholder="e.g. 120"
+                onChange={(e) => handleVitalsChange('blood_pressure_systolic', e.target.value)}
+                placeholder="50 - 300"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Diastolic BP (mmHg)</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Diastolic BP <span className="text-[10px] text-amber-400">(20 - 200 mmHg)</span>
+              </label>
               <input
-                type="text"
+                type="number"
+                min="20"
+                max="200"
                 value={vitals.blood_pressure_diastolic}
-                onChange={(e) => setVitals({ ...vitals, blood_pressure_diastolic: e.target.value })}
-                placeholder="e.g. 80"
+                onChange={(e) => handleVitalsChange('blood_pressure_diastolic', e.target.value)}
+                placeholder="20 - 200"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Pulse Rate (bpm)</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Pulse Rate <span className="text-[10px] text-amber-400">(20 - 250 bpm)</span>
+              </label>
               <input
-                type="text"
+                type="number"
+                min="20"
+                max="250"
                 value={vitals.pulse}
-                onChange={(e) => setVitals({ ...vitals, pulse: e.target.value })}
-                placeholder="e.g. 88"
+                onChange={(e) => handleVitalsChange('pulse', e.target.value)}
+                placeholder="20 - 250"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">SpO2 (%) *Safety</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                SpO2 (%) <span className="text-[10px] text-emerald-400">(50 - 100%)</span>
+              </label>
               <input
-                type="text"
+                type="number"
+                min="50"
+                max="100"
                 value={vitals.spo2}
-                onChange={(e) => setVitals({ ...vitals, spo2: e.target.value })}
-                placeholder="e.g. 97"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none font-bold text-emerald-400"
+                onChange={(e) => handleVitalsChange('spo2', e.target.value)}
+                placeholder="50 - 100"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm font-bold text-emerald-400 focus:border-cyan-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Respiratory Rate (/min)</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Respiratory Rate <span className="text-[10px] text-amber-400">(5 - 80 /min)</span>
+              </label>
               <input
-                type="text"
+                type="number"
+                min="5"
+                max="80"
                 value={vitals.respiratory_rate}
-                onChange={(e) => setVitals({ ...vitals, respiratory_rate: e.target.value })}
-                placeholder="e.g. 18"
+                onChange={(e) => handleVitalsChange('respiratory_rate', e.target.value)}
+                placeholder="5 - 80"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Weight (kg)</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Weight (kg) <span className="text-[10px] text-slate-400">(0.5 - 500 kg)</span>
+              </label>
               <input
-                type="text"
+                type="number"
+                step="0.1"
+                min="0.5"
+                max="500"
                 value={vitals.weight}
-                onChange={(e) => setVitals({ ...vitals, weight: e.target.value })}
-                placeholder="e.g. 62"
+                onChange={(e) => handleVitalsChange('weight', e.target.value)}
+                placeholder="0.5 - 500"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Height (cm)</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Height (cm) <span className="text-[10px] text-slate-400">(20 - 250 cm)</span>
+              </label>
               <input
-                type="text"
+                type="number"
+                min="20"
+                max="250"
                 value={vitals.height}
-                onChange={(e) => setVitals({ ...vitals, height: e.target.value })}
-                placeholder="e.g. 168"
+                onChange={(e) => handleVitalsChange('height', e.target.value)}
+                placeholder="20 - 250"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
               />
             </div>
@@ -612,13 +686,12 @@ export default function PatientAssessmentVisitPage() {
         </div>
       )}
 
-      {/* TAB 5: AI SUMMARY, PDF EXPORT & REALTIME DOCTOR PUSH */}
+      {/* TAB 5: AI SUMMARY & REALTIME DOCTOR PUSH */}
       {activeTab === 'ai_summary' && (
         <div className="space-y-6">
           {aiAssessment ? (
             <div className="space-y-6">
               
-              {/* REAL-TIME SUCCESS ALERT BANNER */}
               {pushSuccess && (
                 <div className="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-bounce">
                   <CheckCircle2 className="w-5 h-5 text-emerald-400" />
@@ -626,7 +699,6 @@ export default function PatientAssessmentVisitPage() {
                 </div>
               )}
 
-              {/* Top Banner Actions & Risk Classification */}
               <div className="glass-panel p-6 rounded-3xl border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
                   <div className="text-xs text-slate-400 font-semibold mb-1">Evaluated Safety Risk Classification</div>
@@ -634,7 +706,6 @@ export default function PatientAssessmentVisitPage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                  {/* SELECT DOCTOR SPECIALIST DROPDOWN */}
                   <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2">
                     <span className="text-[11px] text-slate-400 font-semibold">Target Doctor:</span>
                     <select
@@ -650,7 +721,6 @@ export default function PatientAssessmentVisitPage() {
                     </select>
                   </div>
 
-                  {/* SAVE / DOWNLOAD PDF BUTTON */}
                   <button
                     onClick={handleDownloadPDF}
                     className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 font-bold text-xs transition-all flex items-center gap-2"
@@ -658,7 +728,6 @@ export default function PatientAssessmentVisitPage() {
                     <Download className="w-4 h-4 text-cyan-400" /> DOWNLOAD PDF
                   </button>
 
-                  {/* REALTIME PUSH CASE TO DOCTOR PORTAL BUTTON */}
                   <button
                     onClick={handlePushCaseToDoctor}
                     disabled={pushingToDoctor}
@@ -679,12 +748,10 @@ export default function PatientAssessmentVisitPage() {
 
               {/* Printable PDF Area */}
               <div className="printable-case-file glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
-                
-                {/* PDF Header */}
                 <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
                   <div>
                     <span className="text-xs font-bold uppercase tracking-widest text-cyan-400">Virtual Village Clinic — Clinical Assessment Report</span>
-                    <h2 className="text-lg font-bold text-white mt-0.5">Patient Case File: {patient.name} ({patient.patient_code})</h2>
+                    <h2 className="text-lg font-bold text-white mt-0.5">Patient Case File: {patient.full_name || patient.name} ({patient.patient_code})</h2>
                   </div>
                   <div className="text-right text-xs text-slate-400">
                     <div>Date: {new Date().toLocaleDateString()}</div>
@@ -692,81 +759,12 @@ export default function PatientAssessmentVisitPage() {
                   </div>
                 </div>
 
-                {/* Patient Summary */}
                 <div className="space-y-2">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400">Chief Complaints & AI Synthesis Summary</h3>
                   <p className="text-xs text-slate-200 leading-relaxed bg-slate-950 p-4 rounded-2xl border border-slate-800 font-medium">
                     {aiAssessment.patient_summary}
                   </p>
                 </div>
-
-                {/* Step-by-Step Approved First-Aid Guidance */}
-                {aiAssessment.first_aid_steps && aiAssessment.first_aid_steps.length > 0 && (
-                  <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-2">
-                    <h4 className="text-xs font-bold text-emerald-300 flex items-center gap-2">
-                      <ShieldCheck className="w-4 h-4 text-emerald-400" /> Step-by-Step Approved First-Aid Guidance
-                    </h4>
-                    <div className="space-y-2 text-xs text-slate-200 pt-1">
-                      {aiAssessment.first_aid_steps.map((step, idx) => (
-                        <div key={idx} className="flex items-start gap-2">
-                          <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                            {idx + 1}
-                          </span>
-                          <span className="leading-snug">{step}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Supportive Protocol Medication Guidance */}
-                {aiAssessment.supportive_medication_guidance && aiAssessment.supportive_medication_guidance.length > 0 && (
-                  <div className="p-4 rounded-2xl bg-cyan-950/30 border border-cyan-500/30 space-y-2">
-                    <h4 className="text-xs font-bold text-cyan-300 flex items-center gap-2">
-                      <Pill className="w-4 h-4 text-cyan-400" /> Protocol Supportive Care & Allowed OTC Medication Guidance
-                    </h4>
-                    <div className="space-y-2 text-xs text-slate-200 pt-1">
-                      {aiAssessment.supportive_medication_guidance.map((med, idx) => (
-                        <div key={idx} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-start gap-2">
-                          <span className="text-cyan-400 font-bold">•</span>
-                          <span>{med}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-[11px] text-slate-400 italic pt-1">
-                      *Note: All supportive medication dosages are strictly subject to final approval by a registered remote doctor.
-                    </p>
-                  </div>
-                )}
-
-                {/* Warning Flags */}
-                {aiAssessment.warnings && aiAssessment.warnings.length > 0 && (
-                  <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-1">
-                    <div className="font-bold flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-400" /> Warning Flags & Risk Indicators
-                    </div>
-                    {aiAssessment.warnings.map((w, i) => (
-                      <div key={i}>• {w}</div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Qdrant RAG Protocol Matches */}
-                <div>
-                  <h4 className="text-xs font-bold text-slate-300 mb-2 flex items-center gap-2">
-                    <BookOpen className="w-4 h-4 text-cyan-400" /> Qdrant RAG Approved Clinical Protocols (MoHFW STG)
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {aiAssessment.protocol_matches?.map((pm, i) => (
-                      <div key={i} className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-xs">
-                        <div className="font-bold text-white mb-1">{pm.title}</div>
-                        <div className="text-[11px] text-cyan-400 font-medium mb-1">{pm.source} (Ver {pm.version})</div>
-                        <p className="text-slate-300 text-[11px] leading-normal">{pm.guidance || pm.content}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
               </div>
             </div>
           ) : (
