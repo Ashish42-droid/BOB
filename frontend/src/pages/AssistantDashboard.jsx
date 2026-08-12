@@ -97,16 +97,16 @@ export default function AssistantDashboard() {
   );
 
   return (
-    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-8">
+    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
       
       {/* Top Banner Actions */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold text-white flex items-center gap-2">
+          <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             Clinic Assistant Workspace
-            <span className="text-xs bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-2.5 py-0.5 rounded-full">Active Shift</span>
+            <span className="text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-0.5 rounded-full">Active Shift</span>
           </h1>
-          <p className="text-xs text-slate-400">Rampur Village Primary Health Centre</p>
+          <p className="text-xs text-slate-500">Rampur Village Primary Health Centre</p>
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -115,99 +115,99 @@ export default function AssistantDashboard() {
               if (patients.length > 0) setScheduleForm(prev => ({ ...prev, patient_id: patients[0].id }));
               setShowScheduleModal(true);
             }}
-            className="px-4 py-2.5 rounded-xl bg-purple-950/80 hover:bg-purple-900 border border-purple-500/30 text-purple-300 font-bold text-xs flex items-center gap-2 transition-all"
+            className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-medium text-xs flex items-center gap-2 transition-colors"
           >
-            <Video className="w-4 h-4 text-purple-400" /> 📅 SCHEDULE VIDEO CALL
+            <Video className="w-4 h-4 text-purple-600" /> SCHEDULE VIDEO CALL
           </button>
 
           <Link
             to="/assistant/patients/new"
-            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 font-bold text-xs hover:brightness-110 shadow-lg shadow-cyan-500/20 flex items-center gap-2 transition-all"
+            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm flex items-center gap-2 transition-colors"
           >
-            <UserPlus className="w-4 h-4" /> + REGISTER NEW PATIENT
+            <UserPlus className="w-4 h-4" /> REGISTER NEW PATIENT
           </Link>
         </div>
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="glass-card p-5 rounded-2xl border border-slate-800 flex items-center justify-between">
+        <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs text-slate-400 font-semibold">Today's Patients</p>
-            <h3 className="text-2xl font-extrabold text-white mt-1">{patients.length || 1}</h3>
+            <p className="text-xs text-slate-500 font-medium">Today's Patients</p>
+            <h3 className="text-2xl font-bold text-slate-900 mt-1">{patients.length || 1}</h3>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center border border-cyan-500/20">
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
             <User className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="glass-card p-5 rounded-2xl border border-slate-800 flex items-center justify-between">
+        <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs text-slate-400 font-semibold">Scheduled Video Calls</p>
-            <h3 className="text-2xl font-extrabold text-amber-400 mt-1">{consultations.length || 3}</h3>
+            <p className="text-xs text-slate-500 font-medium">Scheduled Video Calls</p>
+            <h3 className="text-2xl font-bold text-amber-600 mt-1">{consultations.length || 3}</h3>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center border border-amber-500/20">
+          <div className="w-10 h-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100">
             <Video className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="glass-card p-5 rounded-2xl border border-slate-800 flex items-center justify-between">
+        <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs text-slate-400 font-semibold">High-Risk Cases</p>
-            <h3 className="text-2xl font-extrabold text-rose-400 mt-1">{stats.high_risk_cases || 0}</h3>
+            <p className="text-xs text-slate-500 font-medium">High-Risk Cases</p>
+            <h3 className="text-2xl font-bold text-red-600 mt-1">{stats.high_risk_cases || 0}</h3>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center border border-rose-500/20">
+          <div className="w-10 h-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center border border-red-100">
             <ShieldAlert className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="glass-card p-5 rounded-2xl border border-slate-800 flex items-center justify-between">
+        <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs text-slate-400 font-semibold">Completed Consults</p>
-            <h3 className="text-2xl font-extrabold text-emerald-400 mt-1">{stats.completed_consultations || 0}</h3>
+            <p className="text-xs text-slate-500 font-medium">Completed Consults</p>
+            <h3 className="text-2xl font-bold text-emerald-600 mt-1">{stats.completed_consultations || 0}</h3>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+          <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
             <CheckCircle className="w-5 h-5" />
           </div>
         </div>
       </div>
 
-      {/* SCHEDULED VIDEO TELECONSULTATIONS (MODERATE, HIGH & REGULAR VISIT PATIENTS) */}
-      <div className="glass-panel rounded-3xl p-6 border border-slate-800 space-y-4">
+      {/* SCHEDULED VIDEO TELECONSULTATIONS */}
+      <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Video className="w-5 h-5 text-purple-400" /> Scheduled Video Consultations (Client-Server Telemedicine)
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Video className="w-5 h-5 text-purple-600" /> Scheduled Video Consultations
             </h2>
-            <p className="text-xs text-slate-400">Available for Moderate risk, High risk, & Regular visit patients — Doctor & Patient join at scheduled time.</p>
+            <p className="text-xs text-slate-500">Available for Moderate risk, High risk, & Regular visit patients.</p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {consultations.map((c) => (
-            <div key={c.id} className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 flex flex-col justify-between space-y-3">
+            <div key={c.id} className="p-4 rounded-lg bg-slate-50 border border-slate-200 flex flex-col justify-between space-y-3">
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <RiskBadge level={c.risk_level || 'MODERATE'} />
-                  <span className="text-[10px] font-mono text-purple-300 bg-purple-950/80 border border-purple-500/30 px-2 py-0.5 rounded">
+                  <span className="text-[10px] font-semibold text-slate-700 bg-slate-200 px-2 py-0.5 rounded">
                     {c.status || 'SCHEDULED'}
                   </span>
                 </div>
 
-                <div className="font-bold text-sm text-white">{c.patient_name}</div>
-                <div className="text-xs text-slate-400">Code: <strong className="text-cyan-400">{c.patient_code}</strong></div>
-                <div className="text-[11px] text-slate-300 mt-1 font-medium">{c.reason || 'Follow-up Consultation'}</div>
-                <div className="text-[11px] text-purple-300 mt-1">Doctor: {c.doctor_name || 'Dr. Rajesh Sharma'}</div>
-                <div className="text-[11px] text-amber-300 flex items-center gap-1 mt-1">
-                  <Clock className="w-3 h-3" /> {new Date(c.scheduled_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                <div className="font-bold text-sm text-slate-900">{c.patient_name}</div>
+                <div className="text-xs text-slate-500">Code: <strong className="text-blue-600">{c.patient_code}</strong></div>
+                <div className="text-xs text-slate-700 mt-1 font-medium">{c.reason || 'Follow-up Consultation'}</div>
+                <div className="text-xs text-slate-600 mt-1">Doctor: {c.doctor_name || 'Dr. Rajesh Sharma'}</div>
+                <div className="text-xs text-amber-700 flex items-center gap-1 mt-1 font-medium">
+                  <Clock className="w-3.5 h-3.5" /> {new Date(c.scheduled_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </div>
               </div>
 
               <button
                 onClick={() => handleJoinCall(c.id, c.room_id)}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 via-cyan-500 to-emerald-500 text-white font-extrabold text-xs shadow-lg shadow-purple-500/20 hover:brightness-110 flex items-center justify-center gap-2"
+                className="w-full py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
               >
-                <PhoneCall className="w-4 h-4 animate-pulse" /> 📹 JOIN SCHEDULED VIDEO CONSULTATION
+                <PhoneCall className="w-4 h-4" /> JOIN SCHEDULED VIDEO CONSULTATION
               </button>
             </div>
           ))}
@@ -215,9 +215,9 @@ export default function AssistantDashboard() {
       </div>
 
       {/* Search & Patient Queue */}
-      <div className="glass-panel rounded-3xl p-6 border border-slate-800 space-y-4">
+      <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <h2 className="text-lg font-bold text-white">Village Patient Directory & Active Queue</h2>
+          <h2 className="text-base font-bold text-slate-900">Village Patient Directory & Active Queue</h2>
           
           <div className="relative w-full sm:w-72">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
@@ -226,14 +226,14 @@ export default function AssistantDashboard() {
               placeholder="Search ID, Name, Village..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white focus:border-cyan-500 outline-none"
+              className="w-full bg-white border border-slate-300 rounded-lg pl-9 pr-4 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
             />
           </div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-900/90 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+            <thead className="bg-slate-50 text-slate-600 font-semibold uppercase text-[10px] tracking-wider border-b border-slate-200">
               <tr>
                 <th className="px-4 py-3">Patient ID</th>
                 <th className="px-4 py-3">Name & Demographics</th>
@@ -243,33 +243,33 @@ export default function AssistantDashboard() {
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60 text-slate-300">
+            <tbody className="divide-y divide-slate-100 text-slate-800">
               {filteredPatients.map((p) => (
-                <tr key={p.id} className="hover:bg-slate-900/50 transition-colors">
-                  <td className="px-4 py-3.5 font-mono text-cyan-400 font-bold">{p.patient_code}</td>
+                <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-4 py-3.5 font-mono text-blue-600 font-bold">{p.patient_code}</td>
                   <td className="px-4 py-3.5">
-                    <div className="font-semibold text-white">{p.name}</div>
-                    <div className="text-[11px] text-slate-400">{p.age} Yrs | {p.gender}</div>
+                    <div className="font-semibold text-slate-900">{p.name}</div>
+                    <div className="text-[11px] text-slate-500">{p.age} Yrs | {p.gender}</div>
                   </td>
                   <td className="px-4 py-3.5">{p.village}</td>
                   <td className="px-4 py-3.5">
-                    <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-medium">{p.preferred_language || 'Hindi'}</span>
+                    <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">{p.preferred_language || 'Hindi'}</span>
                   </td>
-                  <td className="px-4 py-3.5 font-mono text-slate-400">{p.abha_number || 'Not Linked'}</td>
+                  <td className="px-4 py-3.5 font-mono text-slate-500">{p.abha_number || 'Not Linked'}</td>
                   <td className="px-4 py-3.5 text-right space-x-2">
                     <button
                       onClick={() => {
                         setScheduleForm(prev => ({ ...prev, patient_id: p.id }));
                         setShowScheduleModal(true);
                       }}
-                      className="px-2.5 py-1.5 rounded-lg bg-purple-950/80 hover:bg-purple-900 border border-purple-500/30 text-purple-300 font-semibold text-[11px] transition-all inline-flex items-center gap-1"
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs transition-colors inline-flex items-center gap-1 border border-slate-200"
                     >
-                      <Calendar className="w-3 h-3" /> Schedule Call
+                      <Calendar className="w-3.5 h-3.5" /> Schedule Call
                     </button>
 
                     <button
                       onClick={() => navigate(`/assistant/assessment/${p.id}`)}
-                      className="px-3.5 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 font-semibold text-xs transition-all inline-flex items-center gap-1.5"
+                      className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs transition-colors inline-flex items-center gap-1.5 shadow-sm"
                     >
                       <Activity className="w-3.5 h-3.5" /> Start Visit & Assess
                     </button>
@@ -283,19 +283,19 @@ export default function AssistantDashboard() {
 
       {/* SCHEDULE VIDEO CONSULTATION MODAL */}
       {showScheduleModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="glass-panel p-6 rounded-3xl border border-slate-800 w-full max-w-md space-y-4">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-purple-400" /> Schedule Video Teleconsultation
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-xl w-full max-w-md space-y-4">
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-purple-600" /> Schedule Video Teleconsultation
             </h2>
 
             <form onSubmit={handleScheduleSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Select Patient</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Select Patient</label>
                 <select
                   value={scheduleForm.patient_id}
                   onChange={(e) => setScheduleForm({ ...scheduleForm, patient_id: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-cyan-500 outline-none"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
                 >
                   {patients.map(p => (
                     <option key={p.id} value={p.id}>{p.name} ({p.patient_code}) - {p.village}</option>
@@ -304,11 +304,11 @@ export default function AssistantDashboard() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Case Type / Risk Classification</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Case Type / Risk Classification</label>
                 <select
                   value={scheduleForm.risk_level}
                   onChange={(e) => setScheduleForm({ ...scheduleForm, risk_level: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-cyan-500 outline-none"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
                 >
                   <option value="LOW">LOW Risk (Regular Visit Patient)</option>
                   <option value="MODERATE">MODERATE Risk (Protocol Review Case)</option>
@@ -318,11 +318,11 @@ export default function AssistantDashboard() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Assigned Doctor Specialist</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Doctor Specialist</label>
                 <select
                   value={scheduleForm.doctor_name}
                   onChange={(e) => setScheduleForm({ ...scheduleForm, doctor_name: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-cyan-500 outline-none"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
                 >
                   <option value="Dr. Rajesh Sharma (AIIMS New Delhi)">Dr. Rajesh Sharma (AIIMS New Delhi) - General Physician</option>
                   <option value="Dr. Ananya Sen (JIPMER Puducherry)">Dr. Ananya Sen (JIPMER Puducherry) - Pediatrician</option>
@@ -333,23 +333,23 @@ export default function AssistantDashboard() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Scheduled Date & Time Slot</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Scheduled Date & Time Slot</label>
                 <input
                   type="datetime-local"
                   value={scheduleForm.scheduled_time}
                   onChange={(e) => setScheduleForm({ ...scheduleForm, scheduled_time: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-cyan-500 outline-none"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Consultation Reason / Chief Symptoms</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Consultation Reason / Chief Symptoms</label>
                 <input
                   type="text"
                   value={scheduleForm.reason}
                   onChange={(e) => setScheduleForm({ ...scheduleForm, reason: e.target.value })}
                   placeholder="e.g. Regular Hypertension Checkup or Moderate Fever"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-cyan-500 outline-none"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
                 />
               </div>
 
@@ -357,13 +357,13 @@ export default function AssistantDashboard() {
                 <button
                   type="button"
                   onClick={() => setShowScheduleModal(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-900 text-slate-400 text-xs font-bold hover:text-white"
+                  className="px-4 py-2 rounded-lg bg-slate-100 text-slate-600 text-xs font-medium hover:bg-slate-200 border border-slate-200"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-500 text-white text-xs font-bold hover:brightness-110 shadow-lg shadow-purple-500/20"
+                  className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm"
                 >
                   Confirm & Schedule Video Call
                 </button>

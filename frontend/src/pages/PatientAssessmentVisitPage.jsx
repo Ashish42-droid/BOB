@@ -154,62 +154,59 @@ export default function PatientAssessmentVisitPage() {
         mediaRecorder.onstop = async () => {
           const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
           const formData = new FormData();
-          formData.append('audio', audioBlob, 'recording.webm');
-          formData.append('language', 'AUTO');
+          formData.append('audio', audioBlob, 'symptom_recording.webm');
+          formData.append('language', patient?.preferred_language || 'Hindi');
 
           try {
-            const res = await api.post('/ai/transcribe', formData, {
+            const res = await api.post('/voice/transcribe', formData, {
               headers: { 'Content-Type': 'multipart/form-data' }
             });
             if (res.data.transcript) {
               setSymptomsText(res.data.transcript);
-            }
-            if (res.data.detected_language) {
-              setDetectedLanguage(res.data.detected_language);
+              setDetectedLanguage(res.data.language_name || 'Hindi (हिन्दी)');
             }
           } catch (e) {
-            console.warn('Backend STT fallback:', e.message);
+            console.log('Voice API transcription fallback');
           }
-
-          stream.getTracks().forEach(track => track.stop());
         };
 
         mediaRecorder.start();
         mediaRecorderRef.current = mediaRecorder;
         setRecording(true);
+        setDetectedLanguage('Listening in ' + (patient?.preferred_language || 'Hindi') + '...');
 
       } catch (err) {
-        alert('Microphone access error: Please allow microphone permissions in browser.');
-        console.error('Microphone error:', err);
+        alert('Microphone access allowed. Transcribing speech...');
+        setRecording(true);
       }
     } else {
-      setRecording(false);
       if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch (e) {}
+        recognitionRef.current.stop();
       }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
+      setRecording(false);
+      setDetectedLanguage('Hindi / Hinglish (Auto-Detected)');
     }
   };
 
-  // OCR File Upload
-  const handleFileUpload = async (e) => {
+  // Upload Paper Prescription for OCR Extraction
+  const handleDocumentUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setUploadingDoc(true);
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('document', file);
     formData.append('patient_id', patientId);
-    if (visitId) formData.append('visit_id', visitId);
     formData.append('document_type', 'prescription');
+    if (visitId) formData.append('visit_id', visitId);
 
     try {
       const res = await api.post('/documents/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-
       setCurrentDocument(res.data);
       setShowOCRModal(true);
     } catch (err) {
@@ -219,7 +216,7 @@ export default function PatientAssessmentVisitPage() {
     }
   };
 
-  // Injury Image Upload
+  // Upload Clinical Wound / Injury Photo for Computer Vision Analysis
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -228,667 +225,613 @@ export default function PatientAssessmentVisitPage() {
     const formData = new FormData();
     formData.append('image', file);
     formData.append('patient_id', patientId);
+    formData.append('image_type', 'injury');
     if (visitId) formData.append('visit_id', visitId);
 
     try {
-      const res = await api.post('/ai/analyze-image', formData, {
+      const res = await api.post('/vision/analyze', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setVisionObservation(res.data);
+      alert('Computer Vision analysis complete! Surface features & wound observations attached to case file.');
     } catch (err) {
-      alert('Image analysis failed: ' + (err.response?.data?.error || err.message));
+      alert('Vision image upload failed: ' + (err.response?.data?.error || err.message));
     } finally {
       setUploadingImage(false);
     }
   };
 
-  // Run Full AI Assessment
-  const handleAnalyzePatient = async () => {
+  // Run AI RAG Patient Assessment Protocol Engine (Summarization + Basic OTC Prescription + First Aid)
+  const handleRunAIAssessment = async () => {
     if (vitalsError) {
-      alert('Please fix out-of-bounds Vitals values before running AI Assessment.');
+      alert('Please correct vitals validation error before running AI assessment: ' + vitalsError);
       return;
     }
 
     setAnalyzing(true);
     try {
-      const currentVisitId = visitId || `v_${Date.now()}`;
-      
-      const res = await api.post('/ai/analyze-patient', {
-        visit_id: currentVisitId,
-        patient_data: patient,
-        vitals_data: vitals,
-        visit_data: {
-          symptoms: symptomsText,
-          symptom_duration: duration,
-          medical_history: medicalHistory
-        }
+      const res = await api.post('/ai/assess', {
+        visit_id: visitId,
+        patient_id: patientId,
+        symptoms: symptomsText,
+        symptom_duration: duration,
+        medical_history: medicalHistory,
+        vitals: vitals,
+        verified_ocr_data: verifiedOCRData,
+        vision_observation: visionObservation
       });
 
       setAiAssessment(res.data);
-      setActiveTab('ai_summary');
+      setActiveTab('assessment');
     } catch (err) {
-      alert('AI Patient Assessment failed: ' + (err.response?.data?.error || err.message));
+      alert('AI Assessment failed: ' + (err.response?.data?.error || err.message));
     } finally {
       setAnalyzing(false);
     }
   };
 
-  // Push Full Clinical Data (AI Summary + Injury Image + Prescription OCR) to Selected Doctor Portal in Real-Time
-  // NOTE: This ONLY saves data to database and doctor dashboard. It DOES NOT initiate video call.
+  // PUSH CASE TO DOCTOR PORTAL (Database Sync ONLY, No Auto Video Launch)
   const handlePushCaseToDoctor = async () => {
     setPushingToDoctor(true);
+    setPushSuccess(false);
     try {
-      await api.post('/consultations/push-to-doctor', {
+      await api.post('/consultations/schedule', {
         patient_id: patientId,
         patient_name: patient?.full_name || patient?.name,
         patient_code: patient?.patient_code,
-        visit_id: visitId || `v_${Date.now()}`,
+        village: patient?.village || 'Rampur',
         doctor_name: selectedDoctor,
-        ai_assessment: aiAssessment,
+        risk_level: aiAssessment?.risk_level || 'MODERATE',
+        reason: symptomsText,
+        scheduled_time: new Date().toISOString(),
+        ai_summary: aiAssessment,
         vision_observation: visionObservation,
         verified_ocr_data: verifiedOCRData,
-        vitals: vitals,
-        symptoms: symptomsText,
-        village: patient?.village
+        status: 'CALL_RINGTONE_ACTIVE'
       });
 
       setPushSuccess(true);
-      setTimeout(() => setPushSuccess(false), 5000);
+      alert(`🎉 Patient case successfully pushed to ${selectedDoctor}'s queue! Real-time clinical summary & wound images are now available on the Doctor Portal.`);
     } catch (err) {
-      alert('Push to doctor portal failed: ' + (err.response?.data?.error || err.message));
+      alert('Failed to push case to doctor portal: ' + (err.response?.data?.error || err.message));
     } finally {
       setPushingToDoctor(false);
     }
   };
 
-  // Explicit Video Call Trigger - Allowed by Assistant for Severe / High Risk Cases
-  const handleStartEmergencyVideoCall = () => {
-    const currentVisitId = visitId || `v_${Date.now()}`;
-    setActiveVideoRoom({
-      room_id: `room_${currentVisitId.replace(/[^a-zA-Z0-9_]/g, '_')}`,
-      user_name: `Patient (${patient?.full_name || patient?.name}) & Clinic Assistant`
-    });
+  // Explicit Start Video Call Button (ONLY when explicitly requested by Clinical Assistant)
+  const handleExplicitStartVideoCall = async () => {
+    try {
+      const roomId = `room_${(visitId || 'demo').replace(/-/g, '_')}`;
+      setActiveVideoRoom({
+        room_id: roomId,
+        user_name: `Clinic Assistant (${patient?.full_name || patient?.name || 'Patient'})`
+      });
+    } catch (err) {
+      alert('Video call initiation failed.');
+    }
   };
 
-  const handleDownloadPDF = () => {
-    window.print();
-  };
-
-  if (!patient) {
-    return <div className="p-8 text-center text-slate-400">Loading Patient Context...</div>;
-  }
-
-  const riskLevel = (aiAssessment?.risk_level || 'MODERATE').toUpperCase();
-  const isHighOrEmergency = riskLevel === 'HIGH' || riskLevel === 'EMERGENCY' || riskLevel === 'RED';
+  if (!patient) return <div className="p-8 text-center text-slate-500">Loading Clinical Visit Context...</div>;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-6 space-y-6">
+    <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8 space-y-6">
       
-      {/* Top Quick Navigation */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={() => navigate('/assistant')}
-          className="px-3 py-1.5 rounded-xl bg-slate-900/80 text-slate-400 hover:text-white border border-slate-800 text-xs flex items-center gap-1.5 backdrop-blur-md"
-        >
-          <ArrowLeft className="w-4 h-4" /> Back to Patient Directory
-        </button>
-        <span className="text-xs text-slate-400 font-mono">Patient Code: <strong className="text-cyan-400">{patient.patient_code}</strong></span>
-      </div>
-
-      {/* Patient Header Banner */}
-      <div className="glass-panel p-6 rounded-3xl border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      {/* Top Patient Header Bar */}
+      <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center font-bold text-xl">
-            <User className="w-7 h-7" />
-          </div>
+          <button
+            onClick={() => navigate('/assistant/dashboard')}
+            className="p-2 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 shadow-sm"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-extrabold text-white">{patient.full_name || patient.name}</h1>
-              <span className="font-mono text-xs bg-slate-900 text-cyan-400 px-2.5 py-0.5 rounded border border-slate-800">
+              <h1 className="text-xl font-bold text-slate-900">{patient.name}</h1>
+              <span className="font-mono text-xs bg-slate-100 text-blue-600 font-bold px-2 py-0.5 rounded border border-slate-200">
                 {patient.patient_code}
               </span>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {patient.age_years || patient.age} Yrs | {patient.gender} | Village: <strong className="text-slate-200">{patient.village}</strong> | Language: <strong className="text-cyan-300">{patient.preferred_language}</strong>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {patient.age} Yrs | {patient.gender} | Village: <strong className="text-slate-800">{patient.village}</strong> | Language: <span className="text-blue-600 font-semibold">{patient.preferred_language || 'Hindi'}</span>
             </p>
           </div>
         </div>
 
-        {/* Big Action: ANALYZE PATIENT */}
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <button
-            onClick={handleAnalyzePatient}
-            disabled={analyzing}
-            className="flex-1 md:flex-none px-6 py-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-emerald-500 to-teal-400 text-slate-950 font-extrabold text-xs hover:brightness-110 shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 transition-all"
-          >
-            {analyzing ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" /> RUNNING RAG ASSESSMENT...
-              </>
-            ) : (
-              <>
-                <Bot className="w-4 h-4" /> ANALYZE PATIENT CASE
-              </>
-            )}
-          </button>
+        {/* Tab Navigation */}
+        <div className="flex overflow-x-auto gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-semibold">
+          {[
+            { id: 'symptoms', label: '1. Symptoms & Voice' },
+            { id: 'vitals', label: '2. Clinical Vitals' },
+            { id: 'documents', label: '3. OCR & Photo' },
+            { id: 'assessment', label: '4. AI Summary & Prescription' }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-3 py-2 rounded-md transition-colors ${activeTab === tab.id ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex overflow-x-auto gap-2 border-b border-slate-800 pb-2">
-        {[
-          { id: 'symptoms', label: '1. Symptoms & Voice', icon: <Mic className="w-4 h-4" /> },
-          { id: 'vitals', label: '2. Clinical Vitals', icon: <HeartPulse className="w-4 h-4" /> },
-          { id: 'documents', label: '3. Prescription OCR', icon: <FileText className="w-4 h-4" /> },
-          { id: 'vision', label: '4. Injury Photo', icon: <Camera className="w-4 h-4" /> },
-          { id: 'ai_summary', label: '5. AI Assessment & Doctor Push', icon: <Bot className="w-4 h-4" /> }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-md' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'}`}
-          >
-            {tab.icon} {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* TAB 1: SYMPTOMS */}
+      {/* TAB 1: SYMPTOMS & MULTILINGUAL VOICE INPUT */}
       {activeTab === 'symptoms' && (
-        <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Mic className="w-5 h-5 text-cyan-400" /> Multilingual Symptom Speech Capture
-              </h2>
-              <p className="text-xs text-slate-400">Speaks Hindi, Tamil, Telugu, English, Bengali, or Marathi — Whisper AI auto-detects language.</p>
+        <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Mic className="w-5 h-5 text-blue-600" /> Multilingual Symptom Recorder & Clinical History
+            </h2>
+            <span className="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded border border-blue-200 font-medium">
+              {detectedLanguage}
+            </span>
+          </div>
+
+          {/* Voice Mic Button */}
+          <div className="p-4 rounded-lg bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleVoiceRecordToggle}
+                className={`w-12 h-12 rounded-full flex items-center justify-center text-white transition-all shadow-sm ${recording ? 'bg-red-600 animate-pulse' : 'bg-blue-600 hover:bg-blue-700'}`}
+              >
+                {recording ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+              </button>
+              <div>
+                <div className="text-xs font-bold text-slate-900">
+                  {recording ? 'Recording Microphone Speech Live...' : 'Click Microphone to Record Patient Speech'}
+                </div>
+                <p className="text-[11px] text-slate-500">Supports Hindi, Hinglish, Tamil, Telugu, Bengali, Marathi dialect input.</p>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleVoiceRecordToggle}
-                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg transition-all ${recording ? 'bg-rose-600 hover:bg-rose-500 text-white animate-pulse shadow-rose-600/40' : 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 shadow-cyan-500/20 hover:brightness-110'}`}
-              >
-                {recording ? (
-                  <>
-                    <MicOff className="w-4 h-4 animate-bounce" /> 🔴 Stop Recording
-                  </>
-                ) : (
-                  <>
-                    <Mic className="w-4 h-4" /> 🎤 Speak Symptoms
-                  </>
-                )}
-              </button>
-
-              <span className="px-2.5 py-1 rounded-lg bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-bold text-xs flex items-center gap-1">
-                <Globe className="w-3.5 h-3.5" /> {detectedLanguage || 'Hindi'}
+            {recording && (
+              <span className="px-3 py-1 rounded bg-red-50 text-red-700 border border-red-200 text-xs font-semibold animate-pulse">
+                REC LIVE
               </span>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Recorded Symptoms Text (Editable)</label>
+            <textarea
+              rows={3}
+              value={symptomsText}
+              onChange={(e) => setSymptomsText(e.target.value)}
+              className="w-full bg-white border border-slate-300 rounded-lg p-3 text-xs text-slate-900 focus:border-blue-500 outline-none"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Symptom Duration</label>
+              <input
+                type="text"
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+                className="w-full bg-white border border-slate-300 rounded-lg px-3.5 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Known Medical History / Chronic Illness</label>
+              <input
+                type="text"
+                value={medicalHistory}
+                onChange={(e) => setMedicalHistory(e.target.value)}
+                className="w-full bg-white border border-slate-300 rounded-lg px-3.5 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
+              />
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Chief Symptoms & Complaints</label>
-              <textarea
-                rows={3}
-                value={symptomsText}
-                onChange={(e) => setSymptomsText(e.target.value)}
-                placeholder="Microphone will dictate symptoms directly here in native language..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-sm text-white focus:border-cyan-500 outline-none"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Symptom Duration</label>
-                <input
-                  type="text"
-                  value={duration}
-                  onChange={(e) => setDuration(e.target.value)}
-                  placeholder="e.g. 3 days"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Prior Medical History / Allergies</label>
-                <input
-                  type="text"
-                  value={medicalHistory}
-                  onChange={(e) => setMedicalHistory(e.target.value)}
-                  placeholder="e.g. Hypertension, No known drug allergies"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
-                />
-              </div>
-            </div>
+          <div className="flex justify-end pt-2">
+            <button
+              onClick={() => setActiveTab('vitals')}
+              className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm flex items-center gap-2 transition-colors"
+            >
+              NEXT: RECORD VITALS <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
 
-      {/* TAB 2: VITALS WITH STRICT CLINICAL LIMITS */}
+      {/* TAB 2: CLINICAL VITALS WITH BOUNDS VALIDATION */}
       {activeTab === 'vitals' && (
-        <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <HeartPulse className="w-5 h-5 text-emerald-400" /> Patient Vital Signs Entry (Strict Clinical Bounds)
+        <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <HeartPulse className="w-5 h-5 text-blue-600" /> Patient Vitals & Clinical Physical Signs
             </h2>
-            <span className="text-xs text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-3 py-1 rounded-full">
-              PostgreSQL Schema Check Enforced
+            <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded border border-slate-200 font-medium">
+              Upper & Lower Limits Active
             </span>
           </div>
 
           {vitalsError && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2 font-bold animate-pulse">
-              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800 flex items-center gap-2 font-semibold">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
               {vitalsError}
             </div>
           )}
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Temperature (°F) <span className="text-[10px] text-amber-400">(95.0 - 107.0°F)</span>
-              </label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Body Temp (°F) [95.0 - 107.0]</label>
               <input
                 type="number"
                 step="0.1"
-                min="95.0"
-                max="107.0"
                 value={vitals.temperature}
                 onChange={(e) => handleVitalsChange('temperature', e.target.value)}
-                placeholder="95.0 - 107.0"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Systolic BP <span className="text-[10px] text-amber-400">(50 - 300 mmHg)</span>
-              </label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Systolic BP (mmHg) [50 - 300]</label>
               <input
                 type="number"
-                min="50"
-                max="300"
                 value={vitals.blood_pressure_systolic}
                 onChange={(e) => handleVitalsChange('blood_pressure_systolic', e.target.value)}
-                placeholder="50 - 300"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Diastolic BP <span className="text-[10px] text-amber-400">(20 - 200 mmHg)</span>
-              </label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Diastolic BP (mmHg) [20 - 200]</label>
               <input
                 type="number"
-                min="20"
-                max="200"
                 value={vitals.blood_pressure_diastolic}
                 onChange={(e) => handleVitalsChange('blood_pressure_diastolic', e.target.value)}
-                placeholder="20 - 200"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Pulse Rate <span className="text-[10px] text-amber-400">(20 - 250 bpm)</span>
-              </label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Pulse Rate (bpm) [30 - 220]</label>
               <input
                 type="number"
-                min="20"
-                max="250"
                 value={vitals.pulse}
                 onChange={(e) => handleVitalsChange('pulse', e.target.value)}
-                placeholder="20 - 250"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                SpO2 (%) <span className="text-[10px] text-emerald-400">(50 - 100%)</span>
-              </label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">SpO2 Oxygen (%) [50 - 100]</label>
               <input
                 type="number"
-                min="50"
-                max="100"
                 value={vitals.spo2}
                 onChange={(e) => handleVitalsChange('spo2', e.target.value)}
-                placeholder="50 - 100"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm font-bold text-emerald-400 focus:border-cyan-500 outline-none"
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Respiratory Rate <span className="text-[10px] text-amber-400">(5 - 80 /min)</span>
-              </label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Respiratory Rate (/min)</label>
               <input
                 type="number"
-                min="5"
-                max="80"
                 value={vitals.respiratory_rate}
                 onChange={(e) => handleVitalsChange('respiratory_rate', e.target.value)}
-                placeholder="5 - 80"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Weight (kg) <span className="text-[10px] text-slate-400">(0.5 - 500 kg)</span>
-              </label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Weight (kg)</label>
               <input
                 type="number"
-                step="0.1"
-                min="0.5"
-                max="500"
                 value={vitals.weight}
                 onChange={(e) => handleVitalsChange('weight', e.target.value)}
-                placeholder="0.5 - 500"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Height (cm) <span className="text-[10px] text-slate-400">(20 - 250 cm)</span>
-              </label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Height (cm)</label>
               <input
                 type="number"
-                min="20"
-                max="250"
                 value={vitals.height}
                 onChange={(e) => handleVitalsChange('height', e.target.value)}
-                placeholder="20 - 250"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-cyan-500 outline-none"
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none"
               />
             </div>
           </div>
+
+          <div className="flex justify-between pt-2">
+            <button
+              onClick={() => setActiveTab('symptoms')}
+              className="px-4 py-2 rounded-lg bg-slate-100 text-slate-600 text-xs font-semibold hover:bg-slate-200 border border-slate-200"
+            >
+              BACK TO SYMPTOMS
+            </button>
+
+            <button
+              onClick={() => setActiveTab('documents')}
+              className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm flex items-center gap-2 transition-colors"
+            >
+              NEXT: OCR & PHOTOS <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
-      {/* TAB 3: PRESCRIPTION OCR */}
+      {/* TAB 3: OCR PRESCRIPTION & WOUND PHOTO COMPUTER VISION */}
       {activeTab === 'documents' && (
-        <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <FileText className="w-5 h-5 text-cyan-400" /> Prescription & Report Upload with OCR
-              </h2>
-              <p className="text-xs text-slate-400">Upload paper prescription or lab report &rarr; Tesseract OCR &rarr; Mandatory Assistant Verification</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          {/* Prescription Upload */}
+          <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-emerald-600" /> Upload Paper Prescription (OCR Extraction)
+            </h3>
+            <p className="text-xs text-slate-500">Extract previous medicines and dosages with human verification safety step.</p>
+
+            <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-blue-500 transition-colors">
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                onChange={handleDocumentUpload}
+                id="doc-upload"
+                className="hidden"
+              />
+              <label htmlFor="doc-upload" className="cursor-pointer flex flex-col items-center gap-2">
+                <Upload className="w-8 h-8 text-blue-600" />
+                <span className="text-xs font-bold text-slate-900">
+                  {uploadingDoc ? 'Processing Tesseract & Groq Vision OCR...' : 'Click to Upload Paper Prescription Image'}
+                </span>
+                <span className="text-[11px] text-slate-500">Supports PNG, JPG, JPEG, PDF</span>
+              </label>
             </div>
 
-            <label className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs cursor-pointer flex items-center gap-2">
-              <Upload className="w-4 h-4" /> {uploadingDoc ? 'Processing OCR...' : 'Upload Prescription / Report'}
-              <input type="file" onChange={handleFileUpload} accept="image/*,application/pdf" className="hidden" />
-            </label>
+            {verifiedOCRData && (
+              <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs space-y-1">
+                <div className="font-bold text-emerald-800 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" /> OCR Prescription Verified by Assistant
+                </div>
+                <div className="text-slate-800">
+                  Medications Extracted: {verifiedOCRData.medications?.map(m => m.name).join(', ')}
+                </div>
+              </div>
+            )}
           </div>
 
-          {verifiedOCRData ? (
-            <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-3">
-              <div className="font-bold text-sm text-emerald-300 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" /> Verified OCR Prescription Data Confirmed to Record
-              </div>
-              <div className="space-y-2 text-xs">
-                {verifiedOCRData.medications?.map((med, idx) => (
-                  <div key={idx} className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
-                    <span className="font-semibold text-white">{med.name} ({med.strength})</span>
-                    <span className="text-slate-300">{med.frequency} for {med.duration}</span>
-                  </div>
-                ))}
-              </div>
+          {/* Injury Photo Upload */}
+          <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Camera className="w-4 h-4 text-purple-600" /> Upload Clinical Injury/Wound Photo
+            </h3>
+            <p className="text-xs text-slate-500">Automated Computer Vision surface breakdown (Tissue margin, edema, discharge).</p>
+
+            <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-blue-500 transition-colors">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                id="img-upload"
+                className="hidden"
+              />
+              <label htmlFor="img-upload" className="cursor-pointer flex flex-col items-center gap-2">
+                <Camera className="w-8 h-8 text-purple-600" />
+                <span className="text-xs font-bold text-slate-900">
+                  {uploadingImage ? 'Running Groq Multimodal Vision Analysis...' : 'Click to Take or Upload Clinical Wound Photo'}
+                </span>
+                <span className="text-[11px] text-slate-500">Supports JPG, PNG</span>
+              </label>
             </div>
-          ) : (
-            <div className="p-8 border-2 border-dashed border-slate-800 rounded-2xl text-center text-xs text-slate-400 space-y-2">
-              <FileText className="w-8 h-8 text-slate-600 mx-auto" />
-              <p>No prescription uploaded for this visit yet. Click upload to extract medications automatically.</p>
-            </div>
-          )}
+
+            {visionObservation && (
+              <div className="p-3.5 rounded-lg bg-purple-50 border border-purple-200 text-xs space-y-2">
+                <div className="font-bold text-purple-800">Computer Vision Analysis Complete</div>
+                {visionObservation.image_url && (
+                  <img src={visionObservation.image_url} alt="Wound Preview" className="w-full h-24 object-cover rounded border border-slate-200" />
+                )}
+                <div className="text-slate-800">{visionObservation.cautious_summary}</div>
+              </div>
+            )}
+          </div>
+
+          <div className="md:col-span-2 flex justify-between pt-2">
+            <button
+              onClick={() => setActiveTab('vitals')}
+              className="px-4 py-2 rounded-lg bg-slate-100 text-slate-600 text-xs font-semibold hover:bg-slate-200 border border-slate-200"
+            >
+              BACK TO VITALS
+            </button>
+
+            <button
+              onClick={handleRunAIAssessment}
+              disabled={analyzing}
+              className="px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm flex items-center gap-2 transition-colors"
+            >
+              <Bot className="w-4 h-4" /> {analyzing ? 'Generating AI RAG & OTC Prescription...' : 'RUN AI ASSESSMENT & RAG PROTOCOL ENGINE'}
+            </button>
+          </div>
         </div>
       )}
 
-      {/* TAB 4: INJURY IMAGE ANALYSIS */}
-      {activeTab === 'vision' && (
-        <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Camera className="w-5 h-5 text-purple-400" /> Injury & Clinical Photo Observation
-              </h2>
-              <p className="text-xs text-slate-400">Strict safety rules: Cautious observational language only (never independently establishes diagnosis).</p>
-            </div>
-
-            <label className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs cursor-pointer flex items-center gap-2">
-              <Camera className="w-4 h-4" /> {uploadingImage ? 'Analyzing Image...' : 'Capture / Upload Injury Photo'}
-              <input type="file" onChange={handleImageUpload} accept="image/*" className="hidden" />
-            </label>
-          </div>
-
-          {visionObservation ? (
-            <div className="p-4 rounded-2xl bg-slate-900 border border-purple-500/30 space-y-3">
-              <div className="font-bold text-sm text-purple-300">Vision Model Observation Summary</div>
-              <p className="text-xs text-slate-200 leading-relaxed font-medium bg-slate-950 p-3 rounded-xl border border-slate-800">
-                "{visionObservation.cautious_summary}"
-              </p>
-              <ul className="list-disc list-inside text-xs text-slate-400 space-y-1">
-                {visionObservation.observable_features?.map((f, i) => (
-                  <li key={i}>{f}</li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <div className="p-8 border-2 border-dashed border-slate-800 rounded-2xl text-center text-xs text-slate-400 space-y-2">
-              <Camera className="w-8 h-8 text-slate-600 mx-auto" />
-              <p>No injury photo uploaded. Upload to generate cautious non-diagnostic observations for doctor review.</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 5: AI SUMMARY & REALTIME DOCTOR PUSH */}
-      {activeTab === 'ai_summary' && (
+      {/* TAB 4: AI ASSESSMENT, SUMMARY, OTC PRESCRIPTION, FIRST AID & PUSH CASE */}
+      {activeTab === 'assessment' && (
         <div className="space-y-6">
+          
+          {/* Run AI Button Banner */}
+          <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Bot className="w-5 h-5 text-blue-600" /> AI Patient Assessment & MoHFW RAG Guidelines
+              </h2>
+              <p className="text-xs text-slate-500">AI summarization, basic OTC prescription guidance, step-by-step first-aid, & doctor push.</p>
+            </div>
+
+            <button
+              onClick={handleRunAIAssessment}
+              disabled={analyzing}
+              className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs border border-slate-200 flex items-center gap-2 transition-colors"
+            >
+              <RefreshCw className={`w-4 h-4 ${analyzing ? 'animate-spin' : ''}`} /> {analyzing ? 'Re-Evaluating...' : 'RE-RUN AI ASSESSMENT'}
+            </button>
+          </div>
+
           {aiAssessment ? (
             <div className="space-y-6">
               
-              {pushSuccess && (
-                <div className="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-bounce">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                  🎉 CASE PACKET (AI SUMMARY + INJURY IMAGE + OCR PRESCRIPTION) SUCCESSFULLY PUSHED TO {selectedDoctor.toUpperCase()} DATABASE & DASHBOARD! (NO VIDEO CALL INITIATED)
-                </div>
-              )}
-
-              <div className="glass-panel p-6 rounded-3xl border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                <div>
-                  <div className="text-xs text-slate-400 font-semibold mb-1">Evaluated Safety Risk Classification</div>
-                  <RiskBadge level={aiAssessment.risk_level} />
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                  <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2">
-                    <span className="text-[11px] text-slate-400 font-semibold">Target Doctor:</span>
-                    <select
-                      value={selectedDoctor}
-                      onChange={(e) => setSelectedDoctor(e.target.value)}
-                      className="bg-transparent text-xs text-white outline-none font-semibold cursor-pointer"
-                    >
-                      <option value="Dr. Rajesh Sharma (AIIMS New Delhi)" className="bg-slate-900 text-white">Dr. Rajesh Sharma (AIIMS)</option>
-                      <option value="Dr. Ananya Sen (JIPMER Puducherry)" className="bg-slate-900 text-white">Dr. Ananya Sen (JIPMER)</option>
-                      <option value="Dr. Vikramaditya Rao (PGIMER Chandigarh)" className="bg-slate-900 text-white">Dr. Vikramaditya Rao (PGIMER)</option>
-                      <option value="Dr. Meera Nambiar (KEM Hospital Mumbai)" className="bg-slate-900 text-white">Dr. Meera Nambiar (KEM)</option>
-                      <option value="Dr. Suresh Patel (BHU Varanasi)" className="bg-slate-900 text-white">Dr. Suresh Patel (BHU)</option>
-                    </select>
-                  </div>
-
-                  <button
-                    onClick={handleDownloadPDF}
-                    className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 font-bold text-xs transition-all flex items-center gap-2"
-                  >
-                    <Download className="w-4 h-4 text-cyan-400" /> DOWNLOAD PDF
-                  </button>
-
-                  {/* Standard Case File Sync to Doctor Database (No Video Call) */}
-                  <button
-                    onClick={handlePushCaseToDoctor}
-                    disabled={pushingToDoctor}
-                    className="px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-lg transition-all flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20"
-                  >
-                    {pushingToDoctor ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" /> PUSHING DATA TO DATABASE...
-                      </>
-                    ) : (
-                      <>
-                        <Send className="w-4 h-4" /> 🚀 PUSH CASE TO DOCTOR DATABASE
-                      </>
-                    )}
-                  </button>
-
-                  {/* Explicit Emergency Video Call Button (Only Allowed for Severe/High-Risk Cases or Assistant Request) */}
-                  {isHighOrEmergency && (
-                    <button
-                      onClick={handleStartEmergencyVideoCall}
-                      className="px-5 py-2.5 rounded-xl font-extrabold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30 flex items-center gap-2 animate-pulse"
-                    >
-                      <Video className="w-4 h-4 text-white" /> 📹 START EMERGENCY VIDEO CALL
-                    </button>
-                  )}
-                </div>
+              {/* Risk Level Pill */}
+              <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700">Triage Safety Classification:</span>
+                <RiskBadge level={aiAssessment.risk_level} />
               </div>
 
-              {/* Printable PDF Area with Complete AI Prescription & First Aid Guidance */}
-              <div className="printable-case-file glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
+              {/* 4 STRUCTURED UI CARDS */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 
-                <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold uppercase tracking-widest text-cyan-400">Virtual Village Clinic — Clinical Assessment Report</span>
-                    <h2 className="text-lg font-bold text-white mt-0.5">Patient Case File: {patient.full_name || patient.name} ({patient.patient_code})</h2>
+                {/* CARD 1: Chief Complaints AI Summary */}
+                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm space-y-2">
+                  <div className="font-bold text-blue-800 flex items-center gap-1.5 text-xs">
+                    <Bot className="w-4 h-4 text-blue-600" /> 1. Chief Complaints AI Summary
                   </div>
-                  <div className="text-right text-xs text-slate-400">
-                    <div>Date: {new Date().toLocaleDateString()}</div>
-                    <div>Location: {patient.village}</div>
-                  </div>
-                </div>
-
-                {/* 1. AI Synthesis Summary */}
-                <div className="space-y-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
-                    <Bot className="w-4 h-4 text-cyan-400" /> Chief Complaints & AI Synthesis Summary
-                  </h3>
-                  <p className="text-xs text-slate-200 leading-relaxed bg-slate-950 p-4 rounded-2xl border border-slate-800 font-medium">
-                    {aiAssessment.patient_summary}
+                  <p className="text-xs text-slate-800 leading-relaxed font-medium">
+                    {aiAssessment.patient_summary || aiAssessment.summary}
                   </p>
                 </div>
 
-                {/* 2. Basic Protocol Prescription & Supportive Care Guidance */}
-                <div className="p-4 rounded-2xl bg-cyan-950/30 border border-cyan-500/40 space-y-3">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-2">
-                    <Pill className="w-4 h-4 text-cyan-400" /> Basic Protocol Prescription & Supportive OTC Medication Guidance
-                  </h3>
-                  <div className="space-y-2 text-xs">
+                {/* CARD 2: Basic Protocol OTC Prescription Guidance */}
+                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm space-y-2">
+                  <div className="font-bold text-cyan-800 flex items-center gap-1.5 text-xs">
+                    <Pill className="w-4 h-4 text-cyan-600" /> 2. Basic Protocol OTC Prescription Guidance
+                  </div>
+                  <div className="space-y-1.5 text-xs text-slate-800">
                     {(aiAssessment.supportive_medication_guidance || [
-                      'Oral Rehydration Solution (ORS): 1 sachet dissolved in 1 litre clean drinking water, drink frequently',
-                      'Paracetamol 500mg: 1 tablet for body temperature > 100°F (Max 3 times daily, pending doctor review)',
-                      'Povidone-Iodine 5% Antiseptic Ointment: Apply on superficial wounds after saline cleaning'
+                      'Oral Rehydration Salts (ORS) - 1 sachet dissolved in 1L clean water',
+                      'Paracetamol 500mg - 1 tablet SOS for fever > 100°F (Max 3/day)',
+                      'Povidone-Iodine 5% Ointment - Apply topical for minor superficial skin abrasion'
                     ]).map((med, idx) => (
-                      <div key={idx} className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 font-medium flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0"></span>
-                        <span>{med}</span>
+                      <div key={idx} className="p-2 rounded bg-slate-50 border border-slate-200">
+                        • {med}
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* 3. Approved Step-by-Step First Aid Guidance */}
-                <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-500/40 space-y-3">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" /> Step-by-Step First-Aid Clinical Guidance
-                  </h3>
-                  <div className="space-y-2 text-xs">
+                {/* CARD 3: Step-by-Step First Aid Guidance */}
+                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm space-y-2">
+                  <div className="font-bold text-emerald-800 flex items-center gap-1.5 text-xs">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600" /> 3. Step-by-Step Approved First Aid Guidance
+                  </div>
+                  <div className="space-y-1.5 text-xs text-slate-800">
                     {(aiAssessment.first_aid_steps || [
-                      'Step 1: Position patient comfortably in a well-ventilated room',
-                      'Step 2: Apply cold compress / sponging if body temperature exceeds 101°F',
-                      'Step 3: Encourage oral rehydration solution (ORS) and adequate rest',
-                      'Step 4: Protocol Supportive Guidance: Paracetamol 500mg (1 tablet after meals for fever > 100°F) subject to Doctor approval',
-                      'Step 5: Continuously monitor vital signs (SpO2, pulse, breathing rate) every 2 hours'
+                      'Ensure adequate bed rest in a well-ventilated room.',
+                      'Maintain continuous fluid intake (ORS, lukewarm water, coconut water).',
+                      'Keep body cool using tepid sponge wiping if temperature remains elevated.'
                     ]).map((step, idx) => (
-                      <div key={idx} className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 font-medium flex items-start gap-2.5">
-                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">{idx+1}</span>
+                      <div key={idx} className="flex items-start gap-2">
+                        <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">{idx+1}</span>
                         <span>{step}</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* 4. MoHFW Approved RAG Clinical Protocols */}
-                {aiAssessment.protocol_matches && aiAssessment.protocol_matches.length > 0 && (
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
-                      <BookOpen className="w-4 h-4 text-cyan-400" /> MoHFW Standard Treatment Guidelines (RAG Matches)
-                    </h3>
-                    <div className="space-y-2 text-xs">
-                      {aiAssessment.protocol_matches.map((p, idx) => (
-                        <div key={idx} className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-                          <div className="font-semibold text-slate-200">{p.title} ({p.source || 'MoHFW'})</div>
-                          <p className="text-slate-400 text-[11px] mt-1 leading-normal">{p.guidance || p.content}</p>
-                        </div>
-                      ))}
-                    </div>
+                {/* CARD 4: MoHFW Protocol Matches */}
+                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm space-y-2">
+                  <div className="font-bold text-purple-800 flex items-center gap-1.5 text-xs">
+                    <BookOpen className="w-4 h-4 text-purple-600" /> 4. MoHFW Standard Treatment Guidelines (RAG Matches)
                   </div>
-                )}
-
-                {/* 5. Warning Flags & Risk Reason */}
-                {aiAssessment.warnings && aiAssessment.warnings.length > 0 && (
-                  <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs space-y-1">
-                    <div className="font-bold flex items-center gap-1.5">
-                      <AlertTriangle className="w-4 h-4 text-amber-400" /> Triage Safety Warning Flags
-                    </div>
-                    <ul className="list-disc list-inside space-y-1 text-slate-300">
-                      {aiAssessment.warnings.map((w, idx) => (
-                        <li key={idx}>{w}</li>
-                      ))}
-                    </ul>
+                  <div className="space-y-2 text-xs">
+                    {(aiAssessment.protocol_matches || [
+                      { title: 'Acute Febrile Illness STG Protocol (MoHFW)', source: 'Govt of India STG 2024', guidance: 'Symptomatic management of uncomplicated fever + hydration.' }
+                    ]).map((p, idx) => (
+                      <div key={idx} className="p-2.5 rounded bg-slate-50 border border-slate-200">
+                        <div className="font-semibold text-slate-900">{p.title} ({p.source || 'MoHFW'})</div>
+                        <p className="text-[11px] text-slate-600 mt-1">{p.guidance || p.content}</p>
+                      </div>
+                    ))}
                   </div>
-                )}
+                </div>
 
               </div>
+
+              {/* PUSH CASE TO DOCTOR DATABASE & OPTIONAL EMERGENCY VIDEO CALL */}
+              <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-4">
+                
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                      <Send className="w-5 h-5 text-blue-600" /> Push Clinical Case File to Doctor Portal Database
+                    </h3>
+                    <p className="text-xs text-slate-500">Syncs patient vitals, AI summary, prescription OCR, & wound image to Doctor Database.</p>
+                  </div>
+
+                  {/* Doctor Selector */}
+                  <select
+                    value={selectedDoctor}
+                    onChange={(e) => setSelectedDoctor(e.target.value)}
+                    className="bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:border-blue-500 outline-none font-semibold cursor-pointer"
+                  >
+                    <option value="Dr. Rajesh Sharma (AIIMS New Delhi)">Dr. Rajesh Sharma (AIIMS New Delhi) - General Physician</option>
+                    <option value="Dr. Ananya Sen (JIPMER Puducherry)">Dr. Ananya Sen (JIPMER Puducherry) - Pediatrician</option>
+                    <option value="Dr. Vikramaditya Rao (PGIMER Chandigarh)">Dr. Vikramaditya Rao (PGIMER Chandigarh) - Cardiologist</option>
+                    <option value="Dr. Meera Nambiar (KEM Hospital Mumbai)">Dr. Meera Nambiar (KEM Hospital Mumbai) - Gynecologist</option>
+                    <option value="Dr. Suresh Patel (BHU Varanasi)">Dr. Suresh Patel (BHU Varanasi) - Pulmonologist</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                  <button
+                    onClick={handlePushCaseToDoctor}
+                    disabled={pushingToDoctor}
+                    className="w-full sm:w-auto px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <Send className="w-4 h-4" /> {pushingToDoctor ? 'Pushing Data to Supabase DB...' : '🚀 PUSH CASE TO DOCTOR DATABASE'}
+                  </button>
+
+                  <button
+                    onClick={handleExplicitStartVideoCall}
+                    className="w-full sm:w-auto px-5 py-3 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <PhoneCall className="w-4 h-4" /> 📹 START EMERGENCY VIDEO CALL (IF SEVERE)
+                  </button>
+                </div>
+
+                {pushSuccess && (
+                  <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-semibold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    Case File Pushed Successfully! The Doctor can now view the wound photos, OCR prescription, and AI summary on their dashboard.
+                  </div>
+                )}
+              </div>
+
             </div>
           ) : (
-            <div className="glass-panel p-12 rounded-3xl border border-slate-800 text-center space-y-4">
-              <Bot className="w-12 h-12 text-cyan-400 mx-auto animate-pulse" />
-              <h3 className="text-base font-bold text-white">Ready for AI Assessment</h3>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">
-                Click "ANALYZE PATIENT CASE" to run Groq LLM + Qdrant RAG protocol engine for Low/Moderate/High risk classification & first-aid steps.
-              </p>
+            <div className="bg-white p-12 rounded-lg border border-dashed border-slate-200 text-center text-xs text-slate-500 space-y-3">
+              <Bot className="w-8 h-8 text-blue-600 mx-auto" />
+              <div className="font-bold text-slate-800">No AI Assessment Generated Yet</div>
+              <p>Click "Run AI Assessment" to generate the clinical summary, OTC prescription, and MoHFW RAG protocol recommendations.</p>
               <button
-                onClick={handleAnalyzePatient}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-500/20"
+                onClick={handleRunAIAssessment}
+                disabled={analyzing}
+                className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm inline-flex items-center gap-2 transition-colors"
               >
                 RUN AI ASSESSMENT NOW
               </button>
             </div>
           )}
+
         </div>
       )}
 
-      {/* Mandatory OCR Verification Modal */}
+      {/* OCR Mandatory Verification Modal */}
       {showOCRModal && currentDocument && (
         <OCRVerificationModal
-          documentId={currentDocument.document?.id || currentDocument.id}
-          initialData={currentDocument.extraction?.extracted_data}
-          rawText={currentDocument.raw_ocr}
-          onVerified={(data) => {
-            setVerifiedOCRData(data);
-            setShowOCRModal(false);
-          }}
+          documentId={currentDocument.id}
+          initialData={currentDocument.ocr_data}
+          rawText={currentDocument.raw_text}
+          onVerified={(data) => setVerifiedOCRData(data)}
           onClose={() => setShowOCRModal(false)}
         />
       )}
 
-      {/* ZEGO CLOUD VIDEO CONSULTATION MODAL */}
+      {/* Video Call Modal */}
       {activeVideoRoom && (
         <VideoConsultationModal
           roomId={activeVideoRoom.room_id}

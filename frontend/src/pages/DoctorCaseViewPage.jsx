@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Stethoscope, Video, FileText, CheckCircle2, AlertOctagon, XCircle, ArrowLeft, Send, HeartPulse, User, Bot, AlertTriangle } from 'lucide-react';
+import { Stethoscope, Video, FileText, CheckCircle2, AlertOctagon, ArrowLeft, HeartPulse } from 'lucide-react';
 import api from '../services/api';
-import RiskBadge from '../components/RiskBadge';
 import AIDoctorVisualSeparation from '../components/AIDoctorVisualSeparation';
 import VideoConsultationModal from '../components/VideoConsultationModal';
 
@@ -104,7 +103,7 @@ export default function DoctorCaseViewPage() {
     }
   };
 
-  if (!visit) return <div className="p-8 text-center text-slate-400">Loading Case Details...</div>;
+  if (!visit) return <div className="p-8 text-center text-slate-500">Loading Case Details...</div>;
 
   const patient = visit.patients || { name: 'Ramesh Kumar', patient_code: 'PAT-2026-001', age: 42, gender: 'Male', village: 'Rampur' };
   const vitals = visit.visit_vitals?.[0] || visit.vitals?.[0] || { temperature: 101.2, blood_pressure_systolic: 120, blood_pressure_diastolic: 80, pulse: 88, spo2: 97 };
@@ -120,18 +119,18 @@ export default function DoctorCaseViewPage() {
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate('/doctor/queue')}
-            className="p-2 rounded-xl bg-slate-900 text-slate-400 hover:text-white border border-slate-800"
+            className="p-2 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 shadow-sm"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <h1 className="text-xl font-extrabold text-white flex items-center gap-2">
+            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
               Case Review: {patient.full_name || patient.name}
-              <span className="font-mono text-xs bg-slate-900 text-cyan-400 px-2 py-0.5 rounded border border-slate-800">
+              <span className="font-mono text-xs bg-slate-100 text-blue-600 px-2 py-0.5 rounded border border-slate-200">
                 {patient.patient_code}
               </span>
             </h1>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500">
               {patient.age_years || patient.age} Yrs | {patient.gender} | Village: {patient.village} | Language: {patient.preferred_language || 'Hindi'}
             </p>
           </div>
@@ -140,7 +139,7 @@ export default function DoctorCaseViewPage() {
         {/* Video Call Trigger */}
         <button
           onClick={() => setShowVideoCall(true)}
-          className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-lg shadow-emerald-500/20 flex items-center gap-2"
+          className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm flex items-center gap-2 transition-colors"
         >
           <Video className="w-4 h-4" /> START VIDEO CONSULTATION
         </button>
@@ -152,34 +151,34 @@ export default function DoctorCaseViewPage() {
         <div className="lg:col-span-2 space-y-6">
           
           {/* Patient Vitals Summary */}
-          <div className="glass-panel p-5 rounded-3xl border border-slate-800 space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
-              <HeartPulse className="w-4 h-4" /> Recorded Vitals & Physical Signs
+          <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+              <HeartPulse className="w-4 h-4 text-blue-600" /> Recorded Vitals & Physical Signs
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
-              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
-                <span className="text-slate-400 block">Temperature</span>
-                <span className="font-bold text-white text-sm">
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <span className="text-slate-500 block">Temperature</span>
+                <span className="font-bold text-slate-900 text-sm">
                   {vitals.temperature || vitals.temperature_fahrenheit ? `${vitals.temperature || vitals.temperature_fahrenheit} °F` : (vitals.temperature_celsius ? `${vitals.temperature_celsius} °C` : 'Not recorded')}
                 </span>
               </div>
-              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
-                <span className="text-slate-400 block">Blood Pressure</span>
-                <span className="font-bold text-white text-sm">
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <span className="text-slate-500 block">Blood Pressure</span>
+                <span className="font-bold text-slate-900 text-sm">
                   {vitals.blood_pressure_systolic || vitals.systolic_bp ? `${vitals.blood_pressure_systolic || vitals.systolic_bp}/${vitals.blood_pressure_diastolic || vitals.diastolic_bp}` : 'Not recorded'}
                 </span>
               </div>
-              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
-                <span className="text-slate-400 block">Pulse</span>
-                <span className="font-bold text-white text-sm">{vitals.pulse || vitals.pulse_bpm ? `${vitals.pulse || vitals.pulse_bpm} bpm` : 'Not recorded'}</span>
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <span className="text-slate-500 block">Pulse</span>
+                <span className="font-bold text-slate-900 text-sm">{vitals.pulse || vitals.pulse_bpm ? `${vitals.pulse || vitals.pulse_bpm} bpm` : 'Not recorded'}</span>
               </div>
-              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
-                <span className="text-slate-400 block">SpO2 Oxygen</span>
-                <span className="font-bold text-emerald-400 text-sm">{vitals.spo2 || vitals.oxygen_saturation ? `${vitals.spo2 || vitals.oxygen_saturation} %` : 'Not recorded'}</span>
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <span className="text-slate-500 block">SpO2 Oxygen</span>
+                <span className="font-bold text-emerald-600 text-sm">{vitals.spo2 || vitals.oxygen_saturation ? `${vitals.spo2 || vitals.oxygen_saturation} %` : 'Not recorded'}</span>
               </div>
-              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
-                <span className="text-slate-400 block">Resp Rate</span>
-                <span className="font-bold text-white text-sm">{vitals.respiratory_rate ? `${vitals.respiratory_rate} /min` : 'Not recorded'}</span>
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <span className="text-slate-500 block">Resp Rate</span>
+                <span className="font-bold text-slate-900 text-sm">{vitals.respiratory_rate ? `${vitals.respiratory_rate} /min` : 'Not recorded'}</span>
               </div>
             </div>
           </div>
@@ -195,27 +194,27 @@ export default function DoctorCaseViewPage() {
         </div>
 
         {/* RIGHT COLUMN: DOCTOR DECISION PANEL */}
-        <div className="glass-panel p-6 rounded-3xl border border-emerald-500/30 space-y-6 flex flex-col justify-between">
+        <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-6 flex flex-col justify-between">
           <div className="space-y-4">
-            <h3 className="text-base font-bold text-emerald-300 flex items-center gap-2">
-              <Stethoscope className="w-5 h-5" /> Doctor Action Panel
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Stethoscope className="w-5 h-5 text-blue-600" /> Doctor Action Panel
             </h3>
 
             {/* Decision Selector */}
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Clinical Decision</label>
-              <div className="grid grid-cols-2 gap-2 text-xs font-bold">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Clinical Decision</label>
+              <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
                 <button
                   type="button"
                   onClick={() => setDecision('APPROVED')}
-                  className={`py-2 rounded-xl border transition-colors ${decision === 'APPROVED' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500' : 'bg-slate-900 text-slate-400 border-slate-800'}`}
+                  className={`py-2 rounded-lg border transition-colors ${decision === 'APPROVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-bold' : 'bg-white text-slate-600 border-slate-200'}`}
                 >
                   ✓ APPROVE AI
                 </button>
                 <button
                   type="button"
                   onClick={() => setDecision('MODIFIED')}
-                  className={`py-2 rounded-xl border transition-colors ${decision === 'MODIFIED' ? 'bg-amber-500/20 text-amber-300 border-amber-500' : 'bg-slate-900 text-slate-400 border-slate-800'}`}
+                  className={`py-2 rounded-lg border transition-colors ${decision === 'MODIFIED' ? 'bg-amber-50 text-amber-800 border-amber-300 font-bold' : 'bg-white text-slate-600 border-slate-200'}`}
                 >
                   ✏️ MODIFY AI
                 </button>
@@ -224,26 +223,26 @@ export default function DoctorCaseViewPage() {
 
             {/* Doctor Notes */}
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Doctor Clinical Notes</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Doctor Clinical Notes</label>
               <textarea
                 rows={3}
                 value={doctorNotes}
                 onChange={(e) => setDoctorNotes(e.target.value)}
                 placeholder="Enter diagnosis, advice, and rationale..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-emerald-500 outline-none"
+                className="w-full bg-white border border-slate-300 rounded-lg p-3 text-xs text-slate-900 focus:border-blue-500 outline-none"
               />
             </div>
 
             {/* Prescription Generator */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-semibold text-emerald-300">Issue Digital Prescription</label>
+                <label className="text-xs font-semibold text-slate-800">Issue Digital Prescription</label>
               </div>
               <div className="space-y-2">
                 {rxMeds.map((med, idx) => (
-                  <div key={idx} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
-                    <div className="font-semibold text-white">{med.name} ({med.strength})</div>
-                    <div className="text-slate-400 text-[11px]">{med.frequency} - {med.duration}</div>
+                  <div key={idx} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+                    <div className="font-semibold text-slate-900">{med.name} ({med.strength})</div>
+                    <div className="text-slate-500 text-[11px]">{med.frequency} - {med.duration}</div>
                   </div>
                 ))}
               </div>
@@ -251,11 +250,11 @@ export default function DoctorCaseViewPage() {
           </div>
 
           {/* Action Buttons */}
-          <div className="space-y-2.5 pt-4 border-t border-slate-800">
+          <div className="space-y-2.5 pt-4 border-t border-slate-200">
             <button
               onClick={() => handleFinalizeDecision(decision)}
               disabled={submitting}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-bold text-xs hover:brightness-110 shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
+              className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm flex items-center justify-center gap-2 transition-colors"
             >
               <CheckCircle2 className="w-4 h-4" /> {submitting ? 'Finalizing...' : 'FINALIZING & ISSUE PRESCRIPTION'}
             </button>
@@ -263,9 +262,9 @@ export default function DoctorCaseViewPage() {
             <button
               onClick={handleHospitalReferral}
               disabled={submitting}
-              className="w-full py-2.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs flex items-center justify-center gap-2"
+              className="w-full py-2.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-semibold text-xs flex items-center justify-center gap-2 transition-colors"
             >
-              <AlertOctagon className="w-4 h-4 text-rose-400" /> DISPATCH EMERGENCY HOSPITAL REFERRAL
+              <AlertOctagon className="w-4 h-4 text-red-600" /> DISPATCH EMERGENCY HOSPITAL REFERRAL
             </button>
           </div>
         </div>
