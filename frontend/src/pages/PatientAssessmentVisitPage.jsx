@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Mic, Upload, FileText, Camera, Bot, ShieldCheck, ArrowRight, CheckCircle2, AlertTriangle, Activity, User, HeartPulse, RefreshCw, BookOpen, AlertOctagon, Download, Pill, PhoneCall, ArrowLeft, MicOff, Globe, Video, Send } from 'lucide-react';
+import { Mic, Upload, FileText, Camera, Bot, ShieldCheck, ArrowRight, CheckCircle2, AlertTriangle, Activity, User, HeartPulse, RefreshCw, BookOpen, AlertOctagon, Download, Pill, PhoneCall, ArrowLeft, MicOff, Globe, Video, Send, ShieldAlert } from 'lucide-react';
 import api from '../services/api';
 import RiskBadge from '../components/RiskBadge';
 import OCRVerificationModal from '../components/OCRVerificationModal';
@@ -203,7 +203,7 @@ export default function PatientAssessmentVisitPage() {
     formData.append('file', file);
     formData.append('patient_id', patientId);
     if (visitId) formData.append('visit_id', visitId);
-    formData.append('document_type', 'PRESCRIPTION');
+    formData.append('document_type', 'prescription');
 
     try {
       const res = await api.post('/documents/upload', formData, {
@@ -746,8 +746,9 @@ export default function PatientAssessmentVisitPage() {
                 </div>
               </div>
 
-              {/* Printable PDF Area */}
+              {/* Printable PDF Area with Complete AI Prescription & First Aid Guidance */}
               <div className="printable-case-file glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
+                
                 <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
                   <div>
                     <span className="text-xs font-bold uppercase tracking-widest text-cyan-400">Virtual Village Clinic — Clinical Assessment Report</span>
@@ -759,12 +760,87 @@ export default function PatientAssessmentVisitPage() {
                   </div>
                 </div>
 
+                {/* 1. AI Synthesis Summary */}
                 <div className="space-y-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400">Chief Complaints & AI Synthesis Summary</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                    <Bot className="w-4 h-4 text-cyan-400" /> Chief Complaints & AI Synthesis Summary
+                  </h3>
                   <p className="text-xs text-slate-200 leading-relaxed bg-slate-950 p-4 rounded-2xl border border-slate-800 font-medium">
                     {aiAssessment.patient_summary}
                   </p>
                 </div>
+
+                {/* 2. Basic Protocol Prescription & Supportive Care Guidance */}
+                <div className="p-4 rounded-2xl bg-cyan-950/30 border border-cyan-500/40 space-y-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-2">
+                    <Pill className="w-4 h-4 text-cyan-400" /> Basic Protocol Prescription & Supportive OTC Medication Guidance
+                  </h3>
+                  <div className="space-y-2 text-xs">
+                    {(aiAssessment.supportive_medication_guidance || [
+                      'Oral Rehydration Solution (ORS): 1 sachet dissolved in 1 litre clean drinking water, drink frequently',
+                      'Paracetamol 500mg: 1 tablet for body temperature > 100°F (Max 3 times daily, pending doctor review)',
+                      'Povidone-Iodine 5% Antiseptic Ointment: Apply on superficial wounds after saline cleaning'
+                    ]).map((med, idx) => (
+                      <div key={idx} className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 font-medium flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0"></span>
+                        <span>{med}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. Approved Step-by-Step First Aid Guidance */}
+                <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-500/40 space-y-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" /> Step-by-Step First-Aid Clinical Guidance
+                  </h3>
+                  <div className="space-y-2 text-xs">
+                    {(aiAssessment.first_aid_steps || [
+                      'Step 1: Position patient comfortably in a well-ventilated room',
+                      'Step 2: Apply cold compress / sponging if body temperature exceeds 101°F',
+                      'Step 3: Encourage oral rehydration solution (ORS) and adequate rest',
+                      'Step 4: Protocol Supportive Guidance: Paracetamol 500mg (1 tablet after meals for fever > 100°F) subject to Doctor approval',
+                      'Step 5: Continuously monitor vital signs (SpO2, pulse, breathing rate) every 2 hours'
+                    ]).map((step, idx) => (
+                      <div key={idx} className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 font-medium flex items-start gap-2.5">
+                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">{idx+1}</span>
+                        <span>{step}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 4. MoHFW Approved RAG Clinical Protocols */}
+                {aiAssessment.protocol_matches && aiAssessment.protocol_matches.length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                      <BookOpen className="w-4 h-4 text-cyan-400" /> MoHFW Standard Treatment Guidelines (RAG Matches)
+                    </h3>
+                    <div className="space-y-2 text-xs">
+                      {aiAssessment.protocol_matches.map((p, idx) => (
+                        <div key={idx} className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                          <div className="font-semibold text-slate-200">{p.title} ({p.source || 'MoHFW'})</div>
+                          <p className="text-slate-400 text-[11px] mt-1 leading-normal">{p.guidance || p.content}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 5. Warning Flags & Risk Reason */}
+                {aiAssessment.warnings && aiAssessment.warnings.length > 0 && (
+                  <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs space-y-1">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-400" /> Triage Safety Warning Flags
+                    </div>
+                    <ul className="list-disc list-inside space-y-1 text-slate-300">
+                      {aiAssessment.warnings.map((w, idx) => (
+                        <li key={idx}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
               </div>
             </div>
           ) : (
