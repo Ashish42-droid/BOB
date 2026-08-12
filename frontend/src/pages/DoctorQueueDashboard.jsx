@@ -4,6 +4,7 @@ import { Stethoscope, Clock, ShieldAlert, ArrowRight, Video, User, AlertOctagon,
 import api from '../services/api';
 import RiskBadge from '../components/RiskBadge';
 import VideoConsultationModal from '../components/VideoConsultationModal';
+import { supabase } from '../config/supabase';
 
 export default function DoctorQueueDashboard() {
   const [queue, setQueue] = useState([]);
@@ -32,9 +33,23 @@ export default function DoctorQueueDashboard() {
 
   useEffect(() => {
     fetchQueueAndConsultations();
-    // Realtime polling interval every 3 seconds for active doctor queue updates from Supabase
-    const interval = setInterval(fetchQueueAndConsultations, 3000);
-    return () => clearInterval(interval);
+
+    // Supabase Realtime Subscription for Live Video Call Status Changes
+    const channel = supabase
+      .channel('public:consultations')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'consultations' }, (payload) => {
+        console.log('⚡ Supabase Realtime Consultation Payload Received:', payload);
+        fetchQueueAndConsultations();
+      })
+      .subscribe();
+
+    // Realtime polling fallback interval every 4 seconds
+    const interval = setInterval(fetchQueueAndConsultations, 4000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, []);
 
   const fetchQueueAndConsultations = async () => {
@@ -51,7 +66,7 @@ export default function DoctorQueueDashboard() {
       setConsultations(consultList);
       setFetchError(null);
 
-      // Check if there is an active real-time pushed call for doctor (that was NOT declined)
+      // Check if there is an active call ringtone status pushed for doctor (explicit emergency call)
       const latestActiveCall = consultList.find(c => c.status === 'CALL_RINGTONE_ACTIVE' && c.status !== 'DECLINED');
       if (latestActiveCall) {
         setIncomingCall({
@@ -80,7 +95,11 @@ export default function DoctorQueueDashboard() {
   const handleDoctorJoinCall = async (consultId, roomId, patientName) => {
     try {
       if (consultId) {
-        await api.post(`/consultations/${consultId}/join`).catch(() => {});
+        const res = await api.post(`/consultations/${consultId}/join`).catch(() => {});
+        if (res?.data?.status === 'COMPLETED') {
+          alert('Call has already been completed.');
+          return;
+        }
       }
       setActiveVideoRoom({
         room_id: roomId || `room_${Date.now()}`,
@@ -273,8 +292,8 @@ export default function DoctorQueueDashboard() {
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <RiskBadge level={c.risk_level || 'MODERATE'} />
-                      <span className="text-[10px] font-semibold text-slate-700 bg-slate-200 px-2 py-0.5 rounded">
-                        {c.status || 'SCHEDULED'}
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${c.status === 'ONGOING' ? 'bg-emerald-100 text-emerald-800 animate-pulse' : 'bg-slate-200 text-slate-700'}`}>
+                        {c.status === 'ONGOING' ? '🟢 IN PROGRESS' : (c.status || 'SCHEDULED')}
                       </span>
                     </div>
 
@@ -292,7 +311,7 @@ export default function DoctorQueueDashboard() {
                       onClick={() => handleDoctorJoinCall(c.id, c.room_id, c.patient_name)}
                       className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-colors"
                     >
-                      <PhoneCall className="w-3.5 h-3.5" /> ANSWER CALL
+                      <PhoneCall className="w-3.5 h-3.5" /> JOIN VIDEO CALL
                     </button>
                     <button
                       onClick={() => handleDeclineCall(c.id)}

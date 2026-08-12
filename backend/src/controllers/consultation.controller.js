@@ -5,7 +5,8 @@ import { logAuditEvent } from '../middleware/audit.middleware.js';
 // Real-Time In-Memory Persistence Store for Scheduled Video Teleconsultations (Starts Clean)
 let MEMORY_CONSULTATIONS = [];
 
-// Push Complete Case Context (AI Summary + Injury Photo + Prescription OCR) to Doctor Portal in Real-Time
+// Push Complete Case Context (AI Summary + Injury Photo + Prescription OCR) to Doctor Portal
+// DOES NOT auto-launch or ring any video call (visual/case file data push only)
 export const pushToDoctor = async (req, res) => {
   try {
     const {
@@ -34,15 +35,15 @@ export const pushToDoctor = async (req, res) => {
       visit_id: visit_id || `v_${Date.now()}`,
       patient_id,
       patient_name: patient_name || 'Patient',
-      patient_code: patient_code || 'PAT-2026-001',
-      village: village || 'Rampur Village',
+      patient_code: patient_code || 'PAT-RECORD',
+      village: village || 'Primary Health Centre',
       doctor_name: doctor_name || 'Dr. Rajesh Sharma (AIIMS New Delhi)',
-      risk_level: (ai_assessment?.risk_level || 'HIGH').toUpperCase(),
+      risk_level: (ai_assessment?.risk_level || 'MODERATE').toUpperCase(),
       scheduled_time: new Date().toISOString(),
       mode: 'VIDEO',
-      status: 'CASE_PUSHED',
+      status: 'CASE_PUSHED', // Case file pushed for doctor review (NOT ringable)
       room_id: roomId,
-      reason: ai_assessment?.patient_summary || 'High Priority AI Case Assessment Review',
+      reason: ai_assessment?.patient_summary || 'AI Case Assessment Review',
       ai_summary: ai_assessment,
       vision_observation,
       verified_ocr_data,
@@ -56,23 +57,12 @@ export const pushToDoctor = async (req, res) => {
       await supabaseAdmin.from('consultations').insert([{
         visit_id: newPushRecord.visit_id,
         mode: 'VIDEO',
-        status: 'waiting',
+        status: 'CASE_PUSHED',
         meeting_room_id: roomId
       }]);
     } catch (e) {
       console.warn('Supabase DB consultation insert warning:', e.message);
     }
-
-    // Insert to Supabase DB notifications table
-    try {
-      await supabaseAdmin.from('notifications').insert([{
-        notification_type: 'consultation',
-        channel: 'in_app',
-        title: `New Case File from ${newPushRecord.patient_name}`,
-        message: newPushRecord.reason,
-        status: 'pending'
-      }]);
-    } catch (e) {}
 
     MEMORY_CONSULTATIONS.unshift(newPushRecord);
 
@@ -85,10 +75,10 @@ export const pushToDoctor = async (req, res) => {
       metadata: { patient_id, doctor_name: newPushRecord.doctor_name, risk_level: newPushRecord.risk_level }
     });
 
-    console.log(`🚨 REAL-TIME CASE PUSHED TO DOCTOR PORTAL! Patient: ${newPushRecord.patient_name} (${newPushRecord.patient_code}) & Doctor: ${newPushRecord.doctor_name}`);
+    console.log(`📌 CASE PUSHED TO DOCTOR PORTAL DB! Patient: ${newPushRecord.patient_name} (${newPushRecord.patient_code}) & Doctor: ${newPushRecord.doctor_name}`);
 
     return res.status(201).json({
-      message: 'Case context pushed to Doctor portal in real-time!',
+      message: 'Case file pushed to Doctor database successfully!',
       consultation: newPushRecord,
       room_id: roomId
     });
@@ -98,7 +88,7 @@ export const pushToDoctor = async (req, res) => {
   }
 };
 
-// Schedule a Video Teleconsultation Appointment
+// Explicitly Schedule a Video Teleconsultation Appointment
 export const scheduleConsultation = async (req, res) => {
   try {
     const {
@@ -123,13 +113,13 @@ export const scheduleConsultation = async (req, res) => {
       visit_id: visit_id || `v_${Date.now()}`,
       patient_id,
       patient_name: patient_name || 'Patient',
-      patient_code: patient_code || `PAT-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+      patient_code: patient_code || `PAT-RECORD`,
       doctor_id: doctor_id || 'd_aiims_001',
       doctor_name: doctor_name || 'Dr. Rajesh Sharma (AIIMS New Delhi)',
       risk_level: risk_level.toUpperCase(),
       scheduled_time: scheduled_time || new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       mode: 'VIDEO',
-      status: 'SCHEDULED',
+      status: 'SCHEDULED', // Call is scheduled, only joinable via explicit click
       room_id: roomId,
       reason,
       created_at: new Date().toISOString()
@@ -140,7 +130,8 @@ export const scheduleConsultation = async (req, res) => {
         visit_id: newConsultation.visit_id,
         doctor_id: newConsultation.doctor_id,
         mode: 'VIDEO',
-        status: 'SCHEDULED'
+        status: 'SCHEDULED',
+        meeting_room_id: roomId
       }]);
     } catch (e) {
       console.warn('Supabase DB consultation insert warning:', e.message);
@@ -157,7 +148,7 @@ export const scheduleConsultation = async (req, res) => {
       metadata: { patient_id, scheduled_time: newConsultation.scheduled_time, risk_level }
     });
 
-    console.log(`✅ Consultation Scheduled & Synced! Room: ${roomId} for Patient: ${newConsultation.patient_name}`);
+    console.log(`📅 Consultation Scheduled! Room: ${roomId} for Patient: ${newConsultation.patient_name}`);
 
     return res.status(201).json({
       message: 'Video Consultation scheduled successfully',
@@ -170,7 +161,7 @@ export const scheduleConsultation = async (req, res) => {
   }
 };
 
-// Get All Scheduled Teleconsultations (Excluding DECLINED calls)
+// Get All Scheduled Teleconsultations
 export const getConsultations = async (req, res) => {
   try {
     let dbConsults = [];
@@ -179,7 +170,6 @@ export const getConsultations = async (req, res) => {
       if (data && data.length > 0) dbConsults = data;
     } catch (e) {}
 
-    // Combine in-memory + db consults filtering out DECLINED calls
     const combinedMap = new Map();
     MEMORY_CONSULTATIONS.filter(c => c.status !== 'DECLINED').forEach(c => combinedMap.set(c.id, c));
     dbConsults.filter(c => c.status !== 'DECLINED').forEach(c => {
@@ -192,7 +182,7 @@ export const getConsultations = async (req, res) => {
   }
 };
 
-// Decline Video Call Call - Stops Repeated Ringing until Assistant Recalls
+// Decline Video Call
 export const declineConsultation = async (req, res) => {
   try {
     const { id } = req.params;
@@ -214,24 +204,34 @@ export const declineConsultation = async (req, res) => {
       entityId: id
     });
 
-    console.log(`🛑 Consultation Call ${id} DECLINED by Doctor. Ringing silenced.`);
-    return res.json({ message: 'Call declined by doctor successfully', status: 'DECLINED' });
+    console.log(`🛑 Consultation Call ${id} DECLINED.`);
+    return res.json({ message: 'Call declined successfully', status: 'DECLINED' });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 };
 
-// Join Video Consultation Room
+// Join Video Consultation Room — Explicit User Action Only
 export const joinConsultation = async (req, res) => {
   try {
     const { id } = req.params;
     let consult = MEMORY_CONSULTATIONS.find(c => c.id === id || c.visit_id === id || c.room_id === id);
 
+    if (consult && consult.status === 'COMPLETED') {
+      return res.status(400).json({ error: 'Call has already ended', status: 'COMPLETED' });
+    }
+
     const roomId = consult ? consult.room_id : `room_${id.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
     if (consult) {
-      consult.status = 'IN_PROGRESS';
+      consult.status = 'ONGOING';
+      consult.doctor_joined = req.user?.role === 'DOCTOR' ? true : consult.doctor_joined;
+      consult.patient_joined = req.user?.role === 'CLINIC_ASSISTANT' ? true : consult.patient_joined;
     }
+
+    try {
+      await supabaseAdmin.from('consultations').update({ status: 'ONGOING' }).eq('id', id);
+    } catch (e) {}
 
     await logAuditEvent({
       actorId: req.user?.id || 'user_101',
@@ -245,6 +245,7 @@ export const joinConsultation = async (req, res) => {
       message: 'Joining Video Consultation Room',
       consultation_id: id,
       room_id: roomId,
+      status: 'ONGOING',
       zego_app_id: parseInt(config.zegoCloud.appId || '1586356449'),
       user_id: req.user?.id || `user_${Date.now()}`,
       user_name: req.user?.name || (req.user?.role === 'DOCTOR' ? 'Doctor' : 'Clinic Assistant & Patient')
@@ -289,7 +290,7 @@ export const endConsultation = async (req, res) => {
       entityId: id
     });
 
-    return res.json({ message: 'Consultation completed successfully' });
+    return res.json({ message: 'Consultation completed successfully', status: 'COMPLETED' });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to end consultation', details: error.message });
   }
