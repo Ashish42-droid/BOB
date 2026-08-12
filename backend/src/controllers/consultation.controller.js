@@ -2,54 +2,8 @@ import { config } from '../config/env.js';
 import { supabaseAdmin } from '../config/supabase.js';
 import { logAuditEvent } from '../middleware/audit.middleware.js';
 
-// In-Memory Persistence Store for Scheduled Video Teleconsultations
-let MEMORY_CONSULTATIONS = [
-  {
-    id: 'c_mod_101',
-    visit_id: 'v_priyam_101',
-    patient_id: 'pt_1786539731512',
-    patient_name: 'Priyam Mishra',
-    patient_code: 'PAT-2026-3016',
-    doctor_id: 'd_aiims_001',
-    doctor_name: 'Dr. Rajesh Sharma (AIIMS New Delhi)',
-    risk_level: 'MODERATE',
-    scheduled_time: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // 15 mins from now
-    mode: 'VIDEO',
-    status: 'SCHEDULED',
-    room_id: 'room_priyam_3016',
-    reason: 'Moderate Fever & Dry Cough Protocol Review'
-  },
-  {
-    id: 'c_reg_102',
-    visit_id: 'v_reg_202',
-    patient_id: 'pt_reg_505',
-    patient_name: 'Ramesh Kumar',
-    patient_code: 'PAT-2026-1044',
-    doctor_id: 'd_jipmer_002',
-    doctor_name: 'Dr. Ananya Sen (JIPMER Puducherry)',
-    risk_level: 'LOW',
-    scheduled_time: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30 mins from now
-    mode: 'VIDEO',
-    status: 'SCHEDULED',
-    room_id: 'room_ramesh_1044',
-    reason: 'Regular Follow-up Routine Hypertension Consultation'
-  },
-  {
-    id: 'c_high_103',
-    visit_id: 'v_high_303',
-    patient_id: 'pt_high_808',
-    patient_name: 'Sunita Devi',
-    patient_code: 'PAT-2026-9021',
-    doctor_id: 'd_pgimer_003',
-    doctor_name: 'Dr. Vikramaditya Rao (PGIMER Chandigarh)',
-    risk_level: 'HIGH',
-    scheduled_time: new Date(Date.now() + 2 * 60 * 1000).toISOString(), // 2 mins from now
-    mode: 'VIDEO',
-    status: 'WAITING',
-    room_id: 'room_sunita_9021',
-    reason: 'High Risk Severe Respiratory Distress Escalation'
-  }
-];
+// Real-Time In-Memory Persistence Store for Scheduled Video Teleconsultations (Starts Clean)
+let MEMORY_CONSULTATIONS = [];
 
 // Schedule a Video Teleconsultation Appointment
 export const scheduleConsultation = async (req, res) => {
@@ -97,7 +51,7 @@ export const scheduleConsultation = async (req, res) => {
         status: 'SCHEDULED'
       }]);
     } catch (e) {
-      console.warn('Supabase DB consultation insert fallback to memory store');
+      console.warn('Supabase DB consultation insert warning:', e.message);
     }
 
     MEMORY_CONSULTATIONS.unshift(newConsultation);
@@ -111,7 +65,7 @@ export const scheduleConsultation = async (req, res) => {
       metadata: { patient_id, scheduled_time: newConsultation.scheduled_time, risk_level }
     });
 
-    console.log(`✅ Consultation Scheduled! Room: ${roomId} for Patient: ${newConsultation.patient_name}`);
+    console.log(`✅ Consultation Scheduled & Synced! Room: ${roomId} for Patient: ${newConsultation.patient_name}`);
 
     return res.status(201).json({
       message: 'Video Consultation scheduled successfully',

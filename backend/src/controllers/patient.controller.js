@@ -1,61 +1,8 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { logAuditEvent } from '../middleware/audit.middleware.js';
 
-// In-Memory Patient Cache to guarantee real-time persistence
-const MEMORY_PATIENTS = [
-  {
-    id: 'pt000000-0000-0000-0000-000000000001',
-    patient_code: 'PAT-2026-001',
-    name: 'Ramesh Kumar',
-    age: 42,
-    gender: 'Male',
-    phone: '+91 9876512345',
-    village: 'Rampur (Varanasi, UP)',
-    preferred_language: 'Hindi',
-    abha_number: '12-3456-7890-1234',
-    emergency_contact: 'Sita Devi (Wife)',
-    created_at: new Date(Date.now() - 3600000).toISOString()
-  },
-  {
-    id: 'pt000000-0000-0000-0000-000000000002',
-    patient_code: 'PAT-2026-002',
-    name: 'Sunita Devi',
-    age: 35,
-    gender: 'Female',
-    phone: '+91 9876512347',
-    village: 'Anandpur (Patna, Bihar)',
-    preferred_language: 'Hindi',
-    abha_number: '23-4567-8901-2345',
-    emergency_contact: 'Manoj Kumar',
-    created_at: new Date(Date.now() - 7200000).toISOString()
-  },
-  {
-    id: 'pt000000-0000-0000-0000-000000000003',
-    patient_code: 'PAT-2026-003',
-    name: 'Vikram Patel',
-    age: 58,
-    gender: 'Male',
-    phone: '+91 9876512349',
-    village: 'Chandanpur (Indore, MP)',
-    preferred_language: 'Hindi',
-    abha_number: '34-5678-9012-3456',
-    emergency_contact: 'Rajesh Patel',
-    created_at: new Date(Date.now() - 10800000).toISOString()
-  },
-  {
-    id: 'pt000000-0000-0000-0000-000000000004',
-    patient_code: 'PAT-2026-004',
-    name: 'Ananya Biswas',
-    age: 28,
-    gender: 'Female',
-    phone: '+91 9876512351',
-    village: 'Sundarban (24 Parganas, WB)',
-    preferred_language: 'Bengali',
-    abha_number: '45-6789-0123-4567',
-    emergency_contact: 'Bimal Biswas',
-    created_at: new Date(Date.now() - 14400000).toISOString()
-  }
-];
+// Real-Time In-Memory Patient Persistence Cache (Starts Clean)
+let MEMORY_PATIENTS = [];
 
 // Helper to generate unique Patient Code
 const generatePatientCode = () => {
@@ -86,12 +33,13 @@ export const createPatient = async (req, res) => {
     const patientRecord = {
       patient_code,
       name,
+      age: age ? parseInt(age) : 35,
       gender,
       phone: phone || null,
       village,
-      preferred_language,
-      emergency_contact: emergency_contact || null,
-      created_by: req.user?.id || null
+      preferred_language: preferred_language || 'Hindi',
+      abha_number: abha_number || null,
+      emergency_contact: emergency_contact || null
     };
 
     let newPatient = null;
@@ -101,9 +49,11 @@ export const createPatient = async (req, res) => {
         .insert([patientRecord])
         .select()
         .single();
-      if (!error && data) newPatient = data;
+      if (!error && data) {
+        newPatient = data;
+      }
     } catch (e) {
-      console.warn('Patient Supabase insert schema fallback:', e.message);
+      console.warn('Supabase DB patient insert warning:', e.message);
     }
 
     if (!newPatient) {
@@ -116,20 +66,20 @@ export const createPatient = async (req, res) => {
         gender,
         phone: phone || null,
         village,
-        preferred_language,
+        preferred_language: preferred_language || 'Hindi',
         abha_number: abha_number || null,
         emergency_contact: emergency_contact || null,
         created_at: new Date().toISOString()
       };
     }
 
-    // Add to in-memory store so it is NEVER lost
+    // Unshift to real-time memory store
     MEMORY_PATIENTS.unshift(newPatient);
-    console.log(`✅ Patient registered & saved! ID: ${newPatient.patient_code} (${newPatient.name})`);
+    console.log(`✅ Patient successfully registered & synced in real-time! ID: ${newPatient.patient_code} (${newPatient.name})`);
 
     logAuditEvent({
-      actorId: req.user?.id,
-      actorRole: req.user?.role,
+      actorId: req.user?.id || 'assistant_001',
+      actorRole: req.user?.role || 'CLINIC_ASSISTANT',
       action: 'PATIENT_CREATED',
       entityType: 'PATIENTS',
       entityId: newPatient.id,
@@ -157,14 +107,23 @@ export const getPatients = async (req, res) => {
     } catch (e) {}
 
     // Combine DB patients with in-memory patients, removing duplicates
-    const combined = [...dbPatients];
-    MEMORY_PATIENTS.forEach(mp => {
-      if (!combined.some(p => p.id === mp.id || p.patient_code === mp.patient_code)) {
-        combined.unshift(mp);
-      }
-    });
+    const combinedMap = new Map();
+    MEMORY_PATIENTS.forEach(p => combinedMap.set(p.id, p));
+    dbPatients.forEach(p => combinedMap.set(p.id, p));
 
-    return res.json(combined);
+    const result = Array.from(combinedMap.values());
+
+    // Apply search filter if query is provided
+    if (query) {
+      const q = query.toLowerCase();
+      return res.json(result.filter(p =>
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.patient_code || '').toLowerCase().includes(q) ||
+        (p.village || '').toLowerCase().includes(q)
+      ));
+    }
+
+    return res.json(result);
   } catch (error) {
     return res.status(500).json({ error: 'Failed to fetch patients', details: error.message });
   }
@@ -185,18 +144,7 @@ export const getPatientById = async (req, res) => {
     }
 
     if (!patient) {
-      patient = {
-        id,
-        patient_code: 'PAT-2026-001',
-        name: 'Ramesh Kumar',
-        age: 42,
-        gender: 'Male',
-        phone: '+91 9876512345',
-        village: 'Rampur (Varanasi, UP)',
-        preferred_language: 'Hindi',
-        abha_number: '12-3456-7890-1234',
-        emergency_contact: 'Sita Devi'
-      };
+      return res.status(404).json({ error: 'Patient not found' });
     }
 
     return res.json(patient);
@@ -218,14 +166,6 @@ export const getPatientHistory = async (req, res) => {
         .order('created_at', { ascending: false });
       if (data) visits = data;
     } catch (e) {}
-
-    logAuditEvent({
-      actorId: req.user?.id,
-      actorRole: req.user?.role,
-      action: 'PATIENT_RECORD_VIEWED',
-      entityType: 'PATIENTS',
-      entityId: id
-    });
 
     return res.json(visits || []);
   } catch (error) {

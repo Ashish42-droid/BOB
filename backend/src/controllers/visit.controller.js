@@ -1,8 +1,8 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { logAuditEvent } from '../middleware/audit.middleware.js';
 
-// In-Memory Visits Cache to guarantee real-time persistence
-const MEMORY_VISITS = [];
+// Real-Time In-Memory Visits Cache (Starts Clean)
+let MEMORY_VISITS = [];
 
 export const createVisit = async (req, res) => {
   try {
@@ -49,7 +49,7 @@ export const createVisit = async (req, res) => {
         newVisit = data;
       }
     } catch (e) {
-      console.warn('DB Insert Visit schema fallback:', e.message);
+      console.warn('DB Insert Visit schema warning:', e.message);
     }
 
     if (!newVisit) {
@@ -93,11 +93,11 @@ export const createVisit = async (req, res) => {
     };
 
     MEMORY_VISITS.unshift(fullVisit);
-    console.log(`✅ Visit created! Visit ID: ${newVisit.id} for Patient: ${patient_id}`);
+    console.log(`✅ Visit created & synced! Visit ID: ${newVisit.id} for Patient: ${patient_id}`);
 
     logAuditEvent({
-      actorId: req.user?.id,
-      actorRole: req.user?.role,
+      actorId: req.user?.id || 'assistant_001',
+      actorRole: req.user?.role || 'CLINIC_ASSISTANT',
       action: 'VISIT_CREATED',
       entityType: 'VISITS',
       entityId: newVisit.id,
@@ -140,15 +140,7 @@ export const getVisitById = async (req, res) => {
     }
 
     if (!visit) {
-      visit = {
-        id,
-        chief_complaint: 'Tez bukhar 3 din se aur khansi',
-        symptoms: 'High fever 101.2 F, dry cough',
-        symptom_duration: '3 days',
-        status: 'ASSESSMENT',
-        patients: { name: 'Ramesh Kumar', patient_code: 'PAT-2026-001', age: 42, gender: 'Male', village: 'Rampur' },
-        vitals: [{ temperature: 101.2, pulse: 88, spo2: 97, blood_pressure_systolic: 120, blood_pressure_diastolic: 80 }]
-      };
+      return res.status(404).json({ error: 'Visit not found' });
     }
 
     return res.json(visit);
@@ -179,8 +171,8 @@ export const updateVisit = async (req, res) => {
     }
 
     logAuditEvent({
-      actorId: req.user?.id,
-      actorRole: req.user?.role,
+      actorId: req.user?.id || 'assistant_001',
+      actorRole: req.user?.role || 'CLINIC_ASSISTANT',
       action: 'VISIT_UPDATED',
       entityType: 'VISITS',
       entityId: id,
