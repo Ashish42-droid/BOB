@@ -17,6 +17,22 @@ app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Root API Endpoint Welcome
+app.get(['/', '/api'], (req, res) => {
+  res.json({
+    status: 'ONLINE',
+    service: 'Virtual Village Clinic AI Backend API',
+    endpoints: {
+      health: '/api/health',
+      patients: '/api/patients',
+      visits: '/api/visits',
+      ai: '/api/ai',
+      doctor: '/api/doctor',
+      consultations: '/api/consultations'
+    }
+  });
+});
+
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {
   res.json({

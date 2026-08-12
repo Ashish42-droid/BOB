@@ -1,9 +1,9 @@
 import app from './app.js';
 import { config } from './config/env.js';
 
-const PORT = config.port;
+const PORT = config.port || 5000;
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`
 ======================================================================
 🏥 VIRTUAL VILLAGE CLINIC AI BACKEND SERVER RUNNING
