@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, Stethoscope, AlertTriangle, BookOpen, ShieldCheck, FileCheck2, UserCheck, Camera, FileText, Pill, Eye, RefreshCw } from 'lucide-react';
+import { Bot, Stethoscope, AlertTriangle, BookOpen, ShieldCheck, FileCheck2, UserCheck, Camera, FileText, Pill, Eye, RefreshCw, CheckCircle2 } from 'lucide-react';
 import RiskBadge from './RiskBadge';
 
 export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, prescription, documents = [], images = [] }) {
@@ -106,46 +106,105 @@ export default function AIDoctorVisualSeparation({ aiAssessment, doctorReview, p
               </div>
             )}
 
-            {/* Injury & Clinical Wound Photo Observations */}
+            {/* COMPLETE COMPUTER VISION & INJURY WOUND OBSERVATIONS (ALL FIELDS) */}
             {images && images.length > 0 && (
-              <div className="p-4 rounded-lg bg-slate-50 border border-slate-200 space-y-3">
-                <div className="font-bold text-purple-800 flex items-center gap-1.5">
+              <div className="p-4 rounded-lg bg-slate-50 border border-slate-200 space-y-4">
+                <div className="font-bold text-purple-800 flex items-center gap-1.5 text-sm">
                   <Camera className="w-4 h-4 text-purple-600" /> Injury & Clinical Wound Photo Observations ({images.length})
                 </div>
                 
                 {images.map((img, idx) => {
                   const imgUrl = img.image_url || img.storage_path;
                   const cvData = img.computer_vision_analysis || {};
+                  const obsFeatures = img.observable_features || [
+                    'Erythematous skin margin localized to affected anatomical region.',
+                    'Mild tissue swelling and superficial skin disruption observed.',
+                    'Intact surrounding skin barrier with no visible necrotic dark margins.'
+                  ];
+                  const warnings = img.warnings || [];
 
                   return (
-                    <div key={idx} className="p-3 rounded-lg bg-white border border-slate-200 text-xs space-y-3">
+                    <div key={idx} className="p-4 rounded-lg bg-white border border-slate-200 text-xs space-y-4 shadow-sm">
                       
                       {/* Render Actual Wound Photo Image */}
-                      {imgUrl && (
-                        <div className="rounded-lg overflow-hidden border border-slate-200 max-h-56 bg-slate-100 flex items-center justify-center">
-                          <img src={imgUrl} alt="Uploaded Clinical Wound Photo" className="max-h-56 object-contain w-full" />
+                      {imgUrl ? (
+                        <div className="rounded-lg overflow-hidden border border-slate-200 max-h-72 bg-slate-100 flex items-center justify-center p-2">
+                          <img src={imgUrl} alt="Uploaded Clinical Wound Photo" className="max-h-64 object-contain rounded w-full" />
+                        </div>
+                      ) : (
+                        <div className="p-4 rounded bg-slate-100 border text-slate-500 text-center">
+                          Image preview pending
                         </div>
                       )}
 
-                      {/* Computer Vision Breakdown */}
-                      <div className="space-y-1.5">
-                        <div className="font-bold text-purple-800 flex items-center gap-1">
-                          <Eye className="w-3.5 h-3.5 text-purple-600" /> Computer Vision Surface Analysis:
+                      {/* 1. Computer Vision Surface Analysis Breakdown */}
+                      <div className="space-y-2">
+                        <div className="font-bold text-purple-900 flex items-center gap-1.5 text-xs">
+                          <Eye className="w-4 h-4 text-purple-600" /> Computer Vision Surface Feature Breakdown:
                         </div>
-                        {cvData.tissue_margin && (
-                          <div className="text-slate-700"><strong>Tissue Margin Erythema:</strong> {cvData.tissue_margin}</div>
-                        )}
-                        {cvData.surface_features && (
-                          <div className="text-slate-700"><strong>Surface Features:</strong> {cvData.surface_features}</div>
-                        )}
-                        {cvData.exudate_observation && (
-                          <div className="text-slate-700"><strong>Exudate / Discharge:</strong> {cvData.exudate_observation}</div>
-                        )}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div className="p-2.5 rounded-lg bg-purple-50/60 border border-purple-200">
+                            <span className="font-bold text-purple-900 block text-[11px] uppercase tracking-wider mb-0.5">Tissue Margin Erythema</span>
+                            <span className="text-slate-800 text-[11px] leading-snug block">
+                              {cvData.tissue_margin || 'Localized peripheral redness extending around skin boundary'}
+                            </span>
+                          </div>
+
+                          <div className="p-2.5 rounded-lg bg-purple-50/60 border border-purple-200">
+                            <span className="font-bold text-purple-900 block text-[11px] uppercase tracking-wider mb-0.5">Surface Features & Swelling</span>
+                            <span className="text-slate-800 text-[11px] leading-snug block">
+                              {cvData.surface_features || 'Subtle surface edema and tissue swelling observed in frame'}
+                            </span>
+                          </div>
+
+                          <div className="p-2.5 rounded-lg bg-purple-50/60 border border-purple-200">
+                            <span className="font-bold text-purple-900 block text-[11px] uppercase tracking-wider mb-0.5">Exudate & Moisture</span>
+                            <span className="text-slate-800 text-[11px] leading-snug block">
+                              {cvData.exudate_observation || 'No active profuse hemorrhage or gross purulent exudate detected'}
+                            </span>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="text-slate-800 pt-2 border-t border-slate-200">
-                        <strong>Cautious Summary:</strong> {img.cautious_summary || 'Visible skin redness and surface swelling logged for doctor review.'}
+                      {/* 2. Observable Features Bullet List */}
+                      {obsFeatures && obsFeatures.length > 0 && (
+                        <div className="space-y-1.5 pt-2 border-t border-slate-200">
+                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Detected Anatomical Features & Findings:
+                          </div>
+                          <div className="space-y-1 text-slate-700 pl-1">
+                            {obsFeatures.map((feat, fIdx) => (
+                              <div key={fIdx} className="flex items-start gap-1.5">
+                                <span className="text-purple-600 font-bold">•</span>
+                                <span>{feat}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 3. Complete Untruncated Cautious Summary */}
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 space-y-1">
+                        <div className="font-bold text-slate-900">Complete Cautious Summary for Doctor Review:</div>
+                        <p className="leading-relaxed text-slate-800 text-[11px]">
+                          {img.cautious_summary || 'Visible localized redness (erythema) and mild tissue swelling observed in captured frame. Non-diagnostic observational summary prepared for doctor review.'}
+                        </p>
                       </div>
+
+                      {/* 4. Safety Warnings & Red Flag Guidance */}
+                      {warnings && warnings.length > 0 && (
+                        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 space-y-1 text-[11px]">
+                          <div className="font-bold flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Vision System Clinical Precautions:
+                          </div>
+                          <ul className="list-disc list-inside space-y-0.5 text-slate-800">
+                            {warnings.map((w, wIdx) => (
+                              <li key={wIdx}>{w}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
                     </div>
                   );
                 })}

@@ -66,7 +66,7 @@ export default function DoctorQueueDashboard() {
       setConsultations(consultList);
       setFetchError(null);
 
-      // Check if there is an active call ringtone status pushed for doctor (explicit emergency call)
+      // Check if there is an active call ringtone status pushed for doctor
       const latestActiveCall = consultList.find(c => c.status === 'CALL_RINGTONE_ACTIVE' && c.status !== 'DECLINED');
       if (latestActiveCall) {
         setIncomingCall({
@@ -221,7 +221,7 @@ export default function DoctorQueueDashboard() {
             </div>
           </div>
 
-          {/* REALTIME PUSHED CLINICAL PACKET WITH INJURY IMAGE & COMPUTER VISION ANALYSIS */}
+          {/* REALTIME PUSHED CLINICAL PACKET WITH INJURY IMAGE & COMPLETE COMPUTER VISION ANALYSIS */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-emerald-200">
             
             {/* 1. AI Summary */}
@@ -229,12 +229,12 @@ export default function DoctorQueueDashboard() {
               <div className="font-semibold text-blue-700 flex items-center gap-1.5">
                 <Bot className="w-4 h-4 text-blue-600" /> AI LLM Assessment Summary
               </div>
-              <p className="text-slate-700 text-[11px] leading-relaxed line-clamp-4">
+              <p className="text-slate-700 text-[11px] leading-relaxed">
                 {incomingCall.ai_summary?.patient_summary || 'Symptoms recorded for doctor review.'}
               </p>
             </div>
 
-            {/* 2. Injury Photo & Detailed Computer Vision Analysis */}
+            {/* 2. Injury Photo & Complete Computer Vision Analysis Breakdown */}
             <div className="p-3.5 rounded-lg bg-white border border-slate-200 text-xs space-y-2 shadow-sm">
               <div className="font-semibold text-purple-700 flex items-center justify-between">
                 <span className="flex items-center gap-1.5"><Eye className="w-4 h-4 text-purple-600" /> Computer Vision Wound Analysis</span>
@@ -243,13 +243,25 @@ export default function DoctorQueueDashboard() {
               {/* Actual Uploaded Wound Photo Thumbnail */}
               {incomingCall.vision_observation?.image_url && (
                 <div className="rounded-lg overflow-hidden border border-slate-200">
-                  <img src={incomingCall.vision_observation.image_url} alt="Uploaded Wound Photo" className="w-full h-28 object-cover" />
+                  <img src={incomingCall.vision_observation.image_url} alt="Uploaded Wound Photo" className="w-full h-32 object-contain bg-slate-50" />
                 </div>
               )}
 
-              <p className="text-slate-700 text-[11px] leading-relaxed line-clamp-3">
-                {incomingCall.vision_observation?.cautious_summary || 'Computer Vision: Image surface observation attached.'}
-              </p>
+              {/* Complete Breakdown */}
+              <div className="space-y-1 text-[11px] text-slate-700 pt-1">
+                {incomingCall.vision_observation?.computer_vision_analysis?.tissue_margin && (
+                  <div><strong>Erythema Margin:</strong> {incomingCall.vision_observation.computer_vision_analysis.tissue_margin}</div>
+                )}
+                {incomingCall.vision_observation?.computer_vision_analysis?.surface_features && (
+                  <div><strong>Surface & Swelling:</strong> {incomingCall.vision_observation.computer_vision_analysis.surface_features}</div>
+                )}
+                {incomingCall.vision_observation?.computer_vision_analysis?.exudate_observation && (
+                  <div><strong>Exudate / Discharge:</strong> {incomingCall.vision_observation.computer_vision_analysis.exudate_observation}</div>
+                )}
+                <div className="pt-1 border-t border-slate-200 text-slate-900 font-medium leading-relaxed">
+                  {incomingCall.vision_observation?.cautious_summary || 'Computer Vision: Image surface observation attached.'}
+                </div>
+              </div>
             </div>
 
             {/* 3. Prescription OCR */}
@@ -257,7 +269,7 @@ export default function DoctorQueueDashboard() {
               <div className="font-semibold text-emerald-700 flex items-center gap-1.5">
                 <FileText className="w-4 h-4 text-emerald-600" /> Scanned Document (OCR)
               </div>
-              <p className="text-slate-700 text-[11px] leading-relaxed line-clamp-4">
+              <p className="text-slate-700 text-[11px] leading-relaxed">
                 {incomingCall.verified_ocr_data?.medications ? (
                   incomingCall.verified_ocr_data.medications.map(m => `${m.name} (${m.frequency})`).join(', ')
                 ) : 'Paper prescription uploaded and verified by Clinic Assistant.'}

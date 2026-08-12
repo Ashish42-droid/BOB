@@ -120,7 +120,11 @@ export const analyzePatientCase = async (req, res) => {
       if (images && images.length > 0) {
         const dbImgs = images.map(img => ({
           image_type: img.image_type || 'INJURY',
-          cautious_summary: 'Visible skin redness/swelling observed. Recommended doctor evaluation.'
+          image_url: img.image_url,
+          computer_vision_analysis: img.computer_vision_analysis,
+          observable_features: img.observable_features,
+          cautious_summary: img.cautious_summary || 'Visible skin redness/swelling observed. Recommended doctor evaluation.',
+          warnings: img.warnings
         }));
         imageObservations = [...imageObservations, ...dbImgs];
       }
@@ -218,21 +222,53 @@ export const analyzeImageAI = async (req, res) => {
 
     const observation = await analyzeInjuryImage(file ? file.buffer : null, file ? file.mimetype : 'image/jpeg');
 
-    if (patient_id) {
+    let finalImageUrl = observation.image_url;
+
+    if (patient_id && file) {
+      const fileName = `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`;
+      const storagePath = `injuries/${patient_id}/${fileName}`;
+
+      // Upload actual file binary to Supabase Storage bucket 'injury-photos'
+      try {
+        await supabaseAdmin.storage
+          .from('injury-photos')
+          .upload(storagePath, file.buffer, { contentType: file.mimetype, upsert: true });
+
+        const { data: pubUrlData } = supabaseAdmin.storage.from('injury-photos').getPublicUrl(storagePath);
+        if (pubUrlData?.publicUrl) {
+          finalImageUrl = pubUrlData.publicUrl;
+        }
+      } catch (stgErr) {
+        console.warn('Supabase Storage injury-photos upload warning:', stgErr.message);
+      }
+
+      // Persist full Computer Vision observation structure into `patient_images` table
       try {
         await supabaseAdmin.from('patient_images').insert([{
           patient_id,
           visit_id: visit_id || null,
           storage_bucket: 'injury-photos',
-          storage_path: `injuries/${patient_id}/${Date.now()}_${file ? file.originalname : 'injury.jpg'}`,
+          storage_path: storagePath,
           image_type: 'INJURY',
-          mime_type: file ? file.mimetype : 'image/jpeg'
+          mime_type: file.mimetype,
+          image_url: finalImageUrl || observation.image_url,
+          cautious_summary: observation.cautious_summary,
+          computer_vision_analysis: observation.computer_vision_analysis,
+          observable_features: observation.observable_features,
+          warnings: observation.warnings
         }]);
-      } catch (e) {}
+      } catch (e) {
+        console.warn('patient_images DB insert fallback used:', e.message);
+      }
     }
 
-    return res.json(observation);
+    return res.json({
+      ...observation,
+      image_url: finalImageUrl || observation.image_url
+    });
+
   } catch (error) {
+    console.error('Injury image analysis error:', error.message);
     return res.status(500).json({ error: 'Injury image analysis failed', details: error.message });
   }
 };
