@@ -19,14 +19,19 @@ export const processMedicalDocument = async (fileBuffer, fileName = 'document.jp
       const base64Image = fileBuffer.toString('base64');
       const dataUrl = `data:${mimeType};base64,${base64Image}`;
 
-      const visionResponse = await groq.chat.completions.create({
-        model: 'llama-3.2-11b-vision-preview',
-        temperature: 0.1,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: `You are an expert medical OCR and document extraction system. 
+      const visionModels = ['llama-3.2-90b-vision-preview', 'llama-3.2-11b-vision-instruct', 'llama-3.2-11b-vision-preview'];
+      let visionResponse = null;
+
+      for (const modelName of visionModels) {
+        try {
+          visionResponse = await groq.chat.completions.create({
+            model: modelName,
+            temperature: 0.1,
+            response_format: { type: 'json_object' },
+            messages: [
+              {
+                role: 'system',
+                content: `You are an expert medical OCR and document extraction system. 
 Read the prescription, lab report, or medical history document image carefully. 
 Extract ALL visible text, doctor notes, medicines, dosages, instructions, diagnosis, allergies, and past medical history.
 Return strictly a JSON object formatted as:
@@ -43,22 +48,29 @@ Return strictly a JSON object formatted as:
   "diagnosis_notes": "Clinical diagnosis or notes from document",
   "raw_text_summary": "Complete readable text extracted from document"
 }`
-          },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: 'Transcribe and extract structured medical information from this prescription/report image.' },
-              { type: 'image_url', image_url: { url: dataUrl } }
+              },
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'Transcribe and extract structured medical information from this prescription/report image.' },
+                  { type: 'image_url', image_url: { url: dataUrl } }
+                ]
+              }
             ]
-          }
-        ]
-      });
+          });
+          if (visionResponse) break;
+        } catch (mErr) {
+          console.warn(`Vision model ${modelName} unavailable, trying next...`);
+        }
+      }
 
-      const parsed = JSON.parse(visionResponse.choices[0].message.content);
-      if (parsed) {
-        structuredData = parsed;
-        rawText = parsed.raw_text_summary || JSON.stringify(parsed, null, 2);
-        console.log('✅ Groq Vision OCR successfully extracted medical data!');
+      if (visionResponse) {
+        const parsed = JSON.parse(visionResponse.choices[0].message.content);
+        if (parsed) {
+          structuredData = parsed;
+          rawText = parsed.raw_text_summary || JSON.stringify(parsed, null, 2);
+          console.log('✅ Groq Vision OCR successfully extracted medical data!');
+        }
       }
     } catch (vErr) {
       console.warn('Groq Vision OCR call failed, falling back to Tesseract OCR:', vErr.message);
