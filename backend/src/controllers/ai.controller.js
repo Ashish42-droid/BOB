@@ -32,16 +32,29 @@ export const analyzeDocumentAI = async (req, res) => {
 
 export const analyzePatientCase = async (req, res) => {
   try {
-    const { visit_id, visit_data, vitals_data, patient_data } = req.body;
+    const {
+      visit_id,
+      patient_id,
+      visit_data,
+      vitals_data,
+      patient_data,
+      symptoms,
+      symptom_duration,
+      medical_history,
+      vitals: directVitals,
+      verified_ocr_data,
+      vision_observation
+    } = req.body;
+
     if (!visit_id) return res.status(400).json({ error: 'visit_id is required' });
 
     console.log(`🤖 Starting AI Patient Assessment for Visit ID: ${visit_id}`);
 
     let visit = visit_data || {};
     let patient = patient_data || {};
-    let vitals = vitals_data || {};
-    let verifiedDocs = [];
-    let imageObservations = [];
+    let vitals = vitals_data || directVitals || {};
+    let verifiedDocs = verified_ocr_data ? [verified_ocr_data] : [];
+    let imageObservations = vision_observation ? [vision_observation] : [];
 
     // Safe DB Fetching with robust Schema Cache Fallbacks
     try {
@@ -56,22 +69,21 @@ export const analyzePatientCase = async (req, res) => {
       }
     } catch (e) {}
 
-    // Default visit structure if DB fails or lacks fields
-    if (!visit.id) {
-      visit = {
-        id: visit_id,
-        chief_complaint: 'Tez bukhar 3 din se aur khansi',
-        symptoms: 'High fever 101.2 F, dry cough',
-        symptom_duration: '3 days',
-        medical_history: 'No known chronic conditions',
-        allergies: 'None',
-        ...visit
-      };
-    }
+    // Merge direct body parameters into visit object
+    visit = {
+      id: visit_id,
+      chief_complaint: symptoms || visit.chief_complaint || 'Acute Symptoms Review',
+      symptoms: symptoms || visit.symptoms || 'High fever, dry cough',
+      symptom_duration: symptom_duration || visit.symptom_duration || '3 days',
+      medical_history: medical_history || visit.medical_history || 'No known chronic conditions',
+      allergies: visit.allergies || 'None',
+      ...visit
+    };
 
-    if (visit.patient_id) {
+    const targetPatientId = patient_id || visit.patient_id;
+    if (targetPatientId) {
       try {
-        const { data: pData } = await supabaseAdmin.from('patients').select('*').eq('id', visit.patient_id).single();
+        const { data: pData } = await supabaseAdmin.from('patients').select('*').eq('id', targetPatientId).single();
         if (pData) {
           patient = { ...pData, ...patient };
           patient.name = patient.full_name || patient.name;
@@ -97,17 +109,21 @@ export const analyzePatientCase = async (req, res) => {
         .select('*, document_extractions(*)')
         .eq('visit_id', visit_id);
 
-      verifiedDocs = (docs || [])
-        .map(d => d.document_extractions?.[0]?.structured_data)
-        .filter(Boolean);
+      if (docs && docs.length > 0) {
+        const dbDocs = docs.map(d => d.document_extractions?.[0]?.structured_data).filter(Boolean);
+        verifiedDocs = [...verifiedDocs, ...dbDocs];
+      }
     } catch (e) {}
 
     try {
       const { data: images } = await supabaseAdmin.from('patient_images').select('*').eq('visit_id', visit_id);
-      imageObservations = (images || []).map(img => ({
-        image_type: img.image_type || 'INJURY',
-        cautious_summary: 'Visible skin redness/swelling observed. Recommended doctor evaluation.'
-      }));
+      if (images && images.length > 0) {
+        const dbImgs = images.map(img => ({
+          image_type: img.image_type || 'INJURY',
+          cautious_summary: 'Visible skin redness/swelling observed. Recommended doctor evaluation.'
+        }));
+        imageObservations = [...imageObservations, ...dbImgs];
+      }
     } catch (e) {}
 
     // Run Full AI Orchestrator Pipeline (Groq LLM + Qdrant RAG + Risk Safety Engine)
@@ -119,11 +135,9 @@ export const analyzePatientCase = async (req, res) => {
       imageObservations: imageObservations
     });
 
-    // Map risk level enum to safe lowercase for PostgreSQL enum schema
     const rawRisk = (aiResult.risk_level || 'medium').toLowerCase();
     const safeRiskEnum = ['low', 'medium', 'high'].includes(rawRisk) ? rawRisk : (rawRisk === 'emergency' ? 'high' : 'medium');
 
-    // Save AI assessment into database safely according to 29-table schema
     const aiAssessmentRecord = {
       visit_id: visit_id,
       model_provider: 'Groq',
@@ -146,7 +160,6 @@ export const analyzePatientCase = async (req, res) => {
       console.warn('AI assessment DB insert fallback used:', e.message);
     }
 
-    // Save Risk Assessment safely to `ai_risk_assessments`
     try {
       if (savedAssessmentId && !savedAssessmentId.startsWith('ai_')) {
         await supabaseAdmin.from('ai_risk_assessments').insert([{
@@ -159,7 +172,6 @@ export const analyzePatientCase = async (req, res) => {
       }
     } catch (e) {}
 
-    // Update visit risk level and status
     try {
       await supabaseAdmin.from('visits').update({
         status: 'awaiting_doctor',

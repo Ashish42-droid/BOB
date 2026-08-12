@@ -14,9 +14,11 @@ const router = Router();
 
 router.use(authenticateUser);
 
+// Route aliases matching both /api/ai/assess and /api/ai/analyze-patient
+router.post('/assess', authorizeRoles('CLINIC_ASSISTANT', 'DOCTOR', 'ADMIN'), analyzePatientCase);
+router.post('/analyze-patient', authorizeRoles('CLINIC_ASSISTANT', 'DOCTOR', 'ADMIN'), analyzePatientCase);
 router.post('/transcribe', upload.single('audio'), transcribeSpeech);
 router.post('/analyze-document', upload.single('file'), analyzeDocumentAI);
-router.post('/analyze-patient', authorizeRoles('CLINIC_ASSISTANT', 'DOCTOR', 'ADMIN'), analyzePatientCase);
 router.post('/risk-assessment', getRiskAssessment);
 router.post('/analyze-image', upload.single('image'), analyzeImageAI);
 

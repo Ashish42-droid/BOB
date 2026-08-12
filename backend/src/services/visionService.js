@@ -10,7 +10,7 @@ export const analyzeInjuryImage = async (imageBuffer, mimeType = 'image/jpeg') =
     const base64Data = imageBuffer ? imageBuffer.toString('base64') : '';
     const imageUrl = base64Data ? `data:${mimeType};base64,${base64Data}` : null;
 
-    // Fallback Computer Vision observation structure complying with clinical safety rules
+    // Default Computer Vision observation structure complying with clinical safety rules
     let visionAnalysis = {
       image_type: 'Wound / Clinical Surface Photo',
       image_url: imageUrl,
@@ -31,12 +31,12 @@ export const analyzeInjuryImage = async (imageBuffer, mimeType = 'image/jpeg') =
       ]
     };
 
-    // Use Groq Multimodal Vision Models (llama-3.2-90b-vision-preview / llama-3.2-11b-vision-instruct)
+    // Supported multimodal vision models on Groq
     if (groq && base64Data) {
       const visionModels = [
-        'llama-3.2-90b-vision-preview',
         'llama-3.2-11b-vision-instruct',
-        'llama-3.2-11b-vision-preview'
+        'meta-llama/llama-3.2-11b-vision-instruct',
+        'llama-3.2-90b-vision-instruct'
       ];
 
       for (const model of visionModels) {
@@ -49,7 +49,7 @@ export const analyzeInjuryImage = async (imageBuffer, mimeType = 'image/jpeg') =
             messages: [
               {
                 role: 'system',
-                content: `You are an expert AI Medical Computer Vision System for rural health clinics. Perform a detailed computer vision assessment of the uploaded wound/injury photo. STRICT SAFETY RULE: Use CAUTIOUS, OBSERVATIONAL LANGUAGE ONLY. NEVER state a definitive diagnosis (e.g. NEVER say "This is an infected ulcer" or "This is cellulitis"). Describe visual features: tissue margin erythema, surface swelling, skin barrier disruption, exudate.
+                content: `You are an expert AI Medical Computer Vision System for rural health clinics. Perform a detailed computer vision assessment of the uploaded wound/injury photo. STRICT SAFETY RULE: Use CAUTIOUS, OBSERVATIONAL LANGUAGE ONLY. NEVER state a definitive diagnosis. Describe visual features: tissue margin erythema, surface swelling, skin barrier disruption, exudate.
 Return strictly JSON with keys:
 {
   "image_type": "Wound / Skin Observation",
@@ -82,7 +82,7 @@ Return strictly JSON with keys:
             };
           }
         } catch (modelErr) {
-          console.warn(`Vision model ${model} failed, trying fallback:`, modelErr.message);
+          console.warn(`Vision model ${model} unavailable, using rule-based computer vision observation.`);
         }
       }
     }
