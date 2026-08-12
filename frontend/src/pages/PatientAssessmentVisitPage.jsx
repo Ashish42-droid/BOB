@@ -274,10 +274,11 @@ export default function PatientAssessmentVisitPage() {
   };
 
   // Push Full Clinical Data (AI Summary + Injury Image + Prescription OCR) to Selected Doctor Portal in Real-Time
+  // NOTE: This ONLY saves data to database and doctor dashboard. It DOES NOT initiate video call.
   const handlePushCaseToDoctor = async () => {
     setPushingToDoctor(true);
     try {
-      const res = await api.post('/consultations/push-to-doctor', {
+      await api.post('/consultations/push-to-doctor', {
         patient_id: patientId,
         patient_name: patient?.full_name || patient?.name,
         patient_code: patient?.patient_code,
@@ -293,19 +294,20 @@ export default function PatientAssessmentVisitPage() {
 
       setPushSuccess(true);
       setTimeout(() => setPushSuccess(false), 5000);
-
-      // Open Video Consultation Room for Patient & Assistant
-      if (res.data?.room_id) {
-        setActiveVideoRoom({
-          room_id: res.data.room_id,
-          user_name: `Patient (${patient?.full_name || patient?.name}) & Clinic Assistant`
-        });
-      }
     } catch (err) {
       alert('Push to doctor portal failed: ' + (err.response?.data?.error || err.message));
     } finally {
       setPushingToDoctor(false);
     }
+  };
+
+  // Explicit Video Call Trigger - Allowed by Assistant for Severe / High Risk Cases
+  const handleStartEmergencyVideoCall = () => {
+    const currentVisitId = visitId || `v_${Date.now()}`;
+    setActiveVideoRoom({
+      room_id: `room_${currentVisitId.replace(/[^a-zA-Z0-9_]/g, '_')}`,
+      user_name: `Patient (${patient?.full_name || patient?.name}) & Clinic Assistant`
+    });
   };
 
   const handleDownloadPDF = () => {
@@ -316,8 +318,8 @@ export default function PatientAssessmentVisitPage() {
     return <div className="p-8 text-center text-slate-400">Loading Patient Context...</div>;
   }
 
-  const riskLevel = aiAssessment?.risk_level || 'MODERATE';
-  const isHighOrEmergency = riskLevel === 'HIGH' || riskLevel === 'EMERGENCY' || riskLevel === 'RED' || riskLevel === 'MODERATE';
+  const riskLevel = (aiAssessment?.risk_level || 'MODERATE').toUpperCase();
+  const isHighOrEmergency = riskLevel === 'HIGH' || riskLevel === 'EMERGENCY' || riskLevel === 'RED';
 
   return (
     <div className="max-w-7xl mx-auto px-4 lg:px-8 py-6 space-y-6">
@@ -695,7 +697,7 @@ export default function PatientAssessmentVisitPage() {
               {pushSuccess && (
                 <div className="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-bounce">
                   <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                  🎉 CASE PACKET (AI SUMMARY + INJURY IMAGE + OCR PRESCRIPTION) SUCCESSFULLY PUSHED TO {selectedDoctor.toUpperCase()} IN REAL-TIME!
+                  🎉 CASE PACKET (AI SUMMARY + INJURY IMAGE + OCR PRESCRIPTION) SUCCESSFULLY PUSHED TO {selectedDoctor.toUpperCase()} DATABASE & DASHBOARD! (NO VIDEO CALL INITIATED)
                 </div>
               )}
 
@@ -728,21 +730,32 @@ export default function PatientAssessmentVisitPage() {
                     <Download className="w-4 h-4 text-cyan-400" /> DOWNLOAD PDF
                   </button>
 
+                  {/* Standard Case File Sync to Doctor Database (No Video Call) */}
                   <button
                     onClick={handlePushCaseToDoctor}
                     disabled={pushingToDoctor}
-                    className={`px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-lg transition-all flex items-center gap-2 ${isHighOrEmergency ? 'bg-gradient-to-r from-emerald-500 to-teal-400 hover:brightness-110 text-slate-950 shadow-emerald-500/30' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'}`}
+                    className="px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-lg transition-all flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20"
                   >
                     {pushingToDoctor ? (
                       <>
-                        <RefreshCw className="w-4 h-4 animate-spin" /> PUSHING REAL-TIME TO DOCTOR...
+                        <RefreshCw className="w-4 h-4 animate-spin" /> PUSHING DATA TO DATABASE...
                       </>
                     ) : (
                       <>
-                        <Send className="w-4 h-4 animate-pulse" /> 🚀 PUSH CASE TO DOCTOR PORTAL (REALTIME)
+                        <Send className="w-4 h-4" /> 🚀 PUSH CASE TO DOCTOR DATABASE
                       </>
                     )}
                   </button>
+
+                  {/* Explicit Emergency Video Call Button (Only Allowed for Severe/High-Risk Cases or Assistant Request) */}
+                  {isHighOrEmergency && (
+                    <button
+                      onClick={handleStartEmergencyVideoCall}
+                      className="px-5 py-2.5 rounded-xl font-extrabold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30 flex items-center gap-2 animate-pulse"
+                    >
+                      <Video className="w-4 h-4 text-white" /> 📹 START EMERGENCY VIDEO CALL
+                    </button>
+                  )}
                 </div>
               </div>
 
