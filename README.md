@@ -1,148 +1,196 @@
-# 🏥 AI-Assisted Virtual Village Clinic Platform
+# Rural Healthcare Network API
 
-> **Central Product Principle:**  
-> **"AI prepares the case. The doctor makes the medical decision."**
+Transform every village clinic into a node of collective medical intelligence where world-class healthcare guidance reaches patients regardless of geography.
 
-An AI-assisted Virtual Village Clinic platform designed for trained village health assistants across rural India to digitally capture patient demographics, record symptoms & vitals, digitize paper prescriptions via OCR, analyze injury photos, receive AI-assisted preliminary risk classifications based on Ministry of Health & Family Welfare (MoHFW) approved clinical protocols, and connect patients with remote qualified doctors via HD video teleconsultations.
+## Product Vision
 
----
+This application enables field clinical assistants in rural areas to provide quality healthcare by connecting them with specialist doctors for remote consultations, ensuring underserved village patients receive world-class medical guidance.
 
-## 🌟 Key Features
+## Target Audience
 
-- **🎙️ Multilingual Speech Input with Auto-Language Detection**: Spoken symptoms in Hindi, Tamil, Telugu, Marathi, Bengali, or English are transcribed and converted into structured medical data automatically powered by Groq Whisper AI.
-- **📄 Prescription & Lab Report OCR with Mandatory Human Verification**: Upload paper prescriptions or medical reports using Tesseract OCR & Groq Multimodal Vision with side-by-side mandatory clinic assistant verification before saving.
-- **🧠 Groq LLM + Qdrant Cloud RAG Clinical Protocol Engine**: Queries approved MoHFW Standard Treatment Guidelines (metadata `approved = true`) to output structured patient summaries and step-by-step approved first-aid guidance.
-- **🛡️ Rule-Based Safety Triage Engine**: Segregates cases into **LOW (Green)**, **MODERATE (Yellow)**, **HIGH (Orange)**, and **EMERGENCY (Red)** risk levels with automated red-flag detection.
-- **📹 ZegoCloud 1-on-1 Video Teleconsultation**: Instant WebRTC video call between village sub-centre clinic assistant and remote doctor.
-- **📊 India-Level Rural Health Admin Analytics**: Real-time national metrics across 142 tele-clinics in 12 states, risk distribution breakdown, and qualified doctor roster management.
-- **☀️🌙 Light & Dark Minimalist UI with Dynamic Cursor Shader**: Sleek glassmorphic theme with a cursor-following dynamic radial mesh gradient.
-- **📄 Printable Clinical Summary PDF Export**: 1-click formatted PDF export of complete patient case file.
+- **Field Clinical Assistants**: Healthcare workers in rural village clinics
+- **Specialist Doctors**: Medical professionals providing remote consultation
+- **Village Patients**: Underserved populations seeking quality healthcare
 
----
+## Core Features
 
-## 🏗️ Architecture & Tech Stack
+- **Patient Management**: Complete CRUD operations for patient records
+- **Consultation Management**: Create, track, and manage medical consultations
+- **Remote Collaboration**: Connect clinical assistants with specialist doctors
 
-```
-                               ┌──────────────────────────────────────────────┐
-                               │       React (Vite) + Tailwind CSS SPA        │
-                               │  - 3D Interactive WebGL Globe (Three.js)     │
-                               │  - Light/Dark Minimalist Theme               │
-                               └──────────────────────┬───────────────────────┘
-                                                      │ HTTP / REST
-                               ┌──────────────────────▼───────────────────────┐
-                               │           Node.js Express API Server          │
-                               └──────┬───────────────┬───────────────┬───────┘
-                                      │               │               │
-            ┌─────────────────────────▼──┐   ┌────────▼────────┐   ┌──▼──────────────────────────┐
-            │   Hosted Supabase DB       │   │  Groq Cloud AI  │   │     Qdrant Vector Cloud     │
-            │   (PostgreSQL 19 Tables)   │   │  (Whisper/LLM)  │   │ (MoHFW Approved Protocols)  │
-            └────────────────────────────┘   └─────────────────┘   └─────────────────────────────┘
-```
+## Technology Stack
 
-- **Frontend**: React 18, Vite, Tailwind CSS, Three.js, Lucide Icons, Framer Motion, `@zegocloud/zego-uikit-prebuilt`.
-- **Backend**: Node.js, Express.js, JWT Authentication, Multer file upload.
-- **Database & Storage**: PostgreSQL via hosted Supabase (`supabase-js`).
-- **AI & RAG Engine**: Groq Cloud (`llama-3.3-70b-versatile`, `llama-3.2-11b-vision-preview`, `whisper-large-v3-turbo`), Qdrant Cloud Vector Database (`@qdrant/js-client-rest`).
-- **OCR Engine**: Tesseract.js & Groq Multimodal Vision.
+- **Backend Framework**: FastAPI (Python)
+- **Database**: SQLite (easily upgradeable to PostgreSQL)
+- **ORM**: SQLAlchemy
+- **Validation**: Pydantic
+- **Architecture**: Modular Monolith
 
----
+## Prerequisites
 
-## 🗺️ Implementation Plan
+- Python 3.9 or higher
+- pip (Python package manager)
 
-### 1. Database Schema & Safety Policies (`/database`)
-- `schema.sql`: 19 relational tables including `clinics`, `profiles`, `patients`, `visits`, `vitals`, `medical_documents`, `document_extractions`, `patient_images`, `knowledge_sources`, `protocols`, `ai_assessments`, `doctor_reviews`, `prescriptions`, `audit_logs`.
-- `seed.sql`: Seed data for 142 rural clinics, 5 qualified doctor accounts, MoHFW approved clinical protocols, and 4 sample patient cases across UP, Bihar, MP, and West Bengal.
+## Installation
 
-### 2. Backend Microservices & Controllers (`/backend`)
-- Auth Controller: JWT token issuance with role-based authorization (`CLINIC_ASSISTANT`, `DOCTOR`, `ADMIN`).
-- Patient & Visit Controller: Patient registration, ABHA number linking, clinical visit initiation, and vitals recording with empty-value safety checks.
-- AI & RAG Orchestrator (`aiOrchestrator.js` & `ragEngine.js`): Executes rule-based triage, queries Qdrant Cloud vector DB for approved protocols, and calls Groq LLM for clinical handoff summaries & supportive medication guidance.
-- OCR Service (`ocrService.js`): Multimodal document reading with mandatory human confirmation modal.
-- Speech Service (`speechService.js`): Multilingual Whisper speech transcription with automatic language identification.
+1. Clone the repository or navigate to the project directory
 
-### 3. Frontend Web Application (`/frontend`)
-- Landing Page (`/`): Product vision, safety notice, 6-step workflow, and 3D WebGL interactive node canvas.
-- Clinic Assistant Workspace (`/assistant/dashboard`): Real-time village patient directory, register patient modal, and 5-step visit assessment wizard.
-- Remote Doctor Workspace (`/doctor/queue`): Triage queue sorted by risk level, explicit AI assistance vs Doctor decision visual separation, ZegoCloud video calls, and signed digital prescription submission.
-- Admin Panel (`/admin/dashboard`): India-level village analytics, state coverage breakdown, doctor roster provisioning, protocol ingestion to Qdrant, and compliance audit logs.
-
----
-
-## 🚀 Setup & Running Guide
-
-### Prerequisites
-- Node.js (v18 or higher)
-- npm or yarn
-
-### 1. Clone & Configure Environment Variables
+2. Create a virtual environment:
 ```bash
-git clone https://github.com/Ashish42-droid/BOB.git
-cd BOB
+python -m venv venv
 ```
 
-Create a `.env` file in `backend/.env`:
-```env
-PORT=5000
-JWT_SECRET=virtual_clinic_jwt_secret_key_2026
-
-# Supabase Credentials
-SUPABASE_URL=https://ucivhqksbbwhdwetrkbd.supabase.co
-SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-
-# AI API Credentials
-GROQ_API_KEY=your_groq_api_key
-QDRANT_URL=https://cc6c04a5-4d82-4ada-83db-a20f1cddccb6.sa-east-1-0.aws.cloud.qdrant.io
-QDRANT_API_KEY=your_qdrant_api_key
-
-# Video Teleconsultation
-ZEGOCLOUD_APP_ID=1586356449
-ZEGOCLOUD_SERVER_SECRET=37d7de5083083e70e9d7b6315a428884
-```
-
-Create a `.env` file in `frontend/.env`:
-```env
-VITE_API_BASE_URL=http://localhost:5000/api
-VITE_ZEGOCLOUD_APP_ID=1586356449
-VITE_ZEGOCLOUD_SERVER_SECRET=37d7de5083083e70e9d7b6315a428884
-```
-
-### 2. Install Dependencies & Start Backend Server
+3. Activate the virtual environment:
 ```bash
-cd backend
-npm install
-node src/server.js
-```
-The backend API server will start on `http://localhost:5000/api`.
+# On Linux/Mac
+source venv/bin/activate
 
-### 3. Install Dependencies & Start Frontend Dev Server
+# On Windows
+venv\Scripts\activate
+```
+
+4. Install dependencies:
 ```bash
-cd ../frontend
-npm install
-npm run dev
+pip install -r backend/requirements.txt
 ```
-The frontend web application will start on `http://localhost:3000`.
 
----
+5. Create environment file:
+```bash
+cp .env.example .env
+```
 
-## 🔑 Demo Role-Based Login Credentials
+6. Edit `.env` file and update configuration values (especially SECRET_KEY for production)
 
-For testing and evaluation, click **Role Login** on the homepage or log in using these preset credentials:
+## Running Locally
 
-| Role | Email | Password | Access Rights |
-| :--- | :--- | :--- | :--- |
-| **Clinic Assistant** | `assistant@clinic.org` | *Any / demo* | Register patients, record vitals, upload OCR prescriptions, run AI assessment |
-| **Doctor** | `doctor@clinic.org` | *Any / demo* | View priority consultation queue, launch ZegoCloud video calls, issue signed prescriptions |
-| **Admin** | `admin@clinic.org` | *Any / demo* | View India-level analytics, manage doctor roster, ingest protocols into Qdrant, view audit logs |
+1. Initialize the database:
+```bash
+python -c "from backend.database import init_db; init_db()"
+```
 
----
+2. Start the development server:
+```bash
+python -m backend.main
+```
 
-## 🛡️ Safety & Legal Notice
+The API will be available at `http://localhost:8000`
 
-> AI assistance does not replace professional medical diagnosis or treatment. All clinical decisions, prescriptions, and referrals are made strictly by qualified healthcare professionals registered under the National Medical Commission (NMC) of India.
+3. Access the interactive API documentation:
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
 
----
+## API Endpoints
 
-## 📄 License
+### Health Check
+- `GET /` - Root endpoint with API information
+- `GET /health` - Health check endpoint
 
-Distributed under the MIT License. See `LICENSE` for details.
+### Patients
+- `POST /api/v1/patients/` - Create a new patient
+- `GET /api/v1/patients/` - List all patients (with pagination)
+- `GET /api/v1/patients/{patient_id}` - Get specific patient
+- `PUT /api/v1/patients/{patient_id}` - Update patient information
+- `DELETE /api/v1/patients/{patient_id}` - Delete patient record
+
+### Consultations
+- `POST /api/v1/consultations/` - Create a new consultation
+- `GET /api/v1/consultations/` - List all consultations (with optional status filter)
+- `GET /api/v1/consultations/{consultation_id}` - Get specific consultation
+- `GET /api/v1/consultations/patient/{patient_id}` - Get all consultations for a patient
+- `PUT /api/v1/consultations/{consultation_id}` - Update consultation
+- `DELETE /api/v1/consultations/{consultation_id}` - Delete consultation
+
+## Project Structure
+
+```
+.
+├── backend/
+│   ├── main.py              # Main application entry point
+│   ├── config.py            # Configuration management
+│   ├── models.py            # Database models
+│   ├── database.py          # Database connection and session
+│   ├── requirements.txt     # Python dependencies
+│   └── routers/
+│       ├── patients.py      # Patient endpoints
+│       └── consultations.py # Consultation endpoints
+├── .env.example             # Environment variables template
+└── README.md                # This file
+```
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| DEBUG | Enable debug mode | False |
+| HOST | Server host | 0.0.0.0 |
+| PORT | Server port | 8000 |
+| ALLOWED_ORIGINS | CORS allowed origins | http://localhost:3000,http://localhost:8000 |
+| DATABASE_URL | Database connection string | sqlite:///./healthcare.db |
+| SECRET_KEY | Secret key for security | (change in production) |
+| ACCESS_TOKEN_EXPIRE_MINUTES | Token expiration time | 30 |
+| LOG_LEVEL | Logging level | INFO |
+
+## Architecture Overview
+
+The application follows a **Modular Monolith** architecture with clear separation of concerns:
+
+- **Models Layer**: Database models and schemas (SQLAlchemy)
+- **Routers Layer**: API endpoints and request handling (FastAPI)
+- **Database Layer**: Database connection and session management
+- **Configuration Layer**: Environment-based configuration
+
+## Security Features
+
+- Input validation using Pydantic models
+- SQL injection prevention through SQLAlchemy ORM
+- CORS configuration for cross-origin requests
+- Environment-based configuration for secrets
+- Structured logging for audit trails
+
+## Development
+
+### Adding New Features
+
+1. Define models in `backend/models.py`
+2. Create router in `backend/routers/`
+3. Register router in `backend/main.py`
+4. Update this README with new endpoints
+
+### Database Migrations
+
+For production use, consider implementing Alembic for database migrations:
+```bash
+pip install alembic
+alembic init alembic
+```
+
+## Production Deployment
+
+1. Use PostgreSQL instead of SQLite:
+```bash
+DATABASE_URL=postgresql://user:password@localhost/healthcare
+```
+
+2. Set strong SECRET_KEY:
+```bash
+SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+```
+
+3. Disable DEBUG mode:
+```bash
+DEBUG=False
+```
+
+4. Use production ASGI server:
+```bash
+pip install gunicorn
+gunicorn backend.main:app -w 4 -k uvicorn.workers.UvicornWorker
+```
+
+## License
+
+Proprietary - All rights reserved
+
+## Support
+
+For issues and questions, please contact the development team.
