@@ -30,6 +30,18 @@ async function getDefaultDoctor() {
     : null;
 }
 
+async function getDoctorById(doctorId) {
+  if (!asUuid(doctorId)) return null;
+  const { data } = await supabaseAdmin
+    .from('doctor_profiles')
+    .select('staff_id, specialization, staff_profiles(full_name)')
+    .eq('staff_id', doctorId)
+    .maybeSingle();
+  return data
+    ? { id: data.staff_id, name: data.staff_profiles?.full_name || 'Doctor', specialization: data.specialization }
+    : null;
+}
+
 async function createConsultationRecord({ visitId, appointmentId = null, roomId }) {
   const { data, error } = await supabaseAdmin
     .from('consultations')
@@ -56,7 +68,7 @@ async function createConsultationRecord({ visitId, appointmentId = null, roomId 
  */
 export const pushToDoctor = async (req, res) => {
   try {
-    const { patient_id, patient_name, patient_code, visit_id, doctor_name, ai_assessment } = req.body;
+    const { patient_id, patient_name, patient_code, visit_id, doctor_id, doctor_name, ai_assessment } = req.body;
 
     if (!patient_id || !visit_id) {
       return res.status(400).json({ error: 'patient_id and visit_id are required' });
@@ -65,6 +77,7 @@ export const pushToDoctor = async (req, res) => {
     const cleanCode = (patient_code || 'PAT').replace(/[^a-zA-Z0-9]/g, '_');
     const roomId = `room_${cleanCode}_${Date.now()}`;
 
+    const selectedDoctor = await getDoctorById(doctor_id);
     const consultation = await createConsultationRecord({ visitId: visit_id, roomId });
 
     // Ensure the visit is flagged for the doctor queue
@@ -78,7 +91,9 @@ export const pushToDoctor = async (req, res) => {
       CALL_OVERLAY.set(consultation.id, {
         patient_name: patient_name || 'Patient',
         patient_code: patient_code || 'PAT-RECORD',
-        doctor_name: doctor_name || 'On-call Doctor',
+        doctor_id: selectedDoctor?.id || null,
+        doctor_name: selectedDoctor?.name || doctor_name || 'On-call Doctor',
+        doctor_specialization: selectedDoctor?.specialization || '',
         risk_level: (ai_assessment?.risk_level || 'MEDIUM').toUpperCase(),
         reason: ai_assessment?.patient_summary?.slice(0, 200) || 'AI case assessment review',
         ringing: false
@@ -113,15 +128,19 @@ export const pushToDoctor = async (req, res) => {
  */
 export const ringCall = async (req, res) => {
   try {
-    const { patient_id, patient_name, patient_code, visit_id, risk_level, reason, room_id } = req.body;
+    const { patient_id, patient_name, patient_code, visit_id, doctor_id, risk_level, reason, room_id } = req.body;
 
     const roomId = room_id || `room_${(patient_code || 'PAT').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
+    const selectedDoctor = await getDoctorById(doctor_id);
     const consultation = await createConsultationRecord({ visitId: visit_id, roomId });
 
     if (consultation) {
       CALL_OVERLAY.set(consultation.id, {
         patient_name: patient_name || 'Patient',
         patient_code: patient_code || 'PAT-RECORD',
+        doctor_id: selectedDoctor?.id || null,
+        doctor_name: selectedDoctor?.name || 'On-call Doctor',
+        doctor_specialization: selectedDoctor?.specialization || '',
         risk_level: (risk_level || 'HIGH').toUpperCase(),
         reason: reason || 'Emergency teleconsultation request',
         ringing: true
@@ -169,8 +188,8 @@ export const scheduleConsultation = async (req, res) => {
     }
 
     const roomId = `room_${(patient_code || 'PAT').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
-    const defaultDoctor = await getDefaultDoctor();
-    const doctorId = asUuid(doctor_id) || defaultDoctor?.id || null;
+    const selectedDoctor = (await getDoctorById(doctor_id)) || (await getDefaultDoctor());
+    const doctorId = selectedDoctor?.id || null;
     const when = scheduled_time || new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
     // 1. Appointment (the scheduled slot)
@@ -210,7 +229,9 @@ export const scheduleConsultation = async (req, res) => {
       CALL_OVERLAY.set(consultation.id, {
         patient_name: patient_name || 'Patient',
         patient_code: patient_code || 'PAT-RECORD',
-        doctor_name: doctor_name || defaultDoctor?.name || 'On-call Doctor',
+        doctor_id: doctorId,
+        doctor_name: selectedDoctor?.name || doctor_name || 'On-call Doctor',
+        doctor_specialization: selectedDoctor?.specialization || '',
         risk_level: String(risk_level).toUpperCase(),
         scheduled_time: when,
         reason,
@@ -247,7 +268,7 @@ export const getConsultations = async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('consultations')
-      .select('*, visits(id, visit_code, risk_level, chief_complaint, patients(id, full_name, patient_code, village))')
+      .select('*, visits(id, visit_code, risk_level, chief_complaint, patients(id, full_name, patient_code, village)), appointments(id, doctor_id, reason, doctor_profiles(specialization, staff_profiles(full_name)))')
       .neq('status', 'cancelled')
       .order('created_at', { ascending: false })
       .limit(50);
@@ -257,21 +278,32 @@ export const getConsultations = async (req, res) => {
       return res.json([]);
     }
 
-    const enriched = (data || []).map((c) => {
+    let enriched = (data || []).map((c) => {
       const overlay = CALL_OVERLAY.get(c.id) || {};
+      const apt = c.appointments || null;
+      const doctorId = overlay.doctor_id || apt?.doctor_id || null;
       return {
         ...c,
+        appointments: undefined,
         room_id: c.meeting_room_id,
         patient_name: overlay.patient_name || c.visits?.patients?.full_name || 'Patient',
         patient_code: overlay.patient_code || c.visits?.patients?.patient_code || '',
         village: c.visits?.patients?.village || '',
         risk_level: overlay.risk_level || (c.visits?.risk_level || 'medium').toUpperCase(),
-        reason: overlay.reason || c.visits?.chief_complaint || '',
-        doctor_name: overlay.doctor_name || 'On-call Doctor',
+        reason: overlay.reason || apt?.reason?.split(' | Scheduled for:')[0] || c.visits?.chief_complaint || '',
+        doctor_id: doctorId,
+        doctor_name: overlay.doctor_name || apt?.doctor_profiles?.staff_profiles?.full_name || 'On-call Doctor',
+        doctor_specialization: overlay.doctor_specialization || apt?.doctor_profiles?.specialization || '',
         scheduled_time: overlay.scheduled_time || c.created_at,
         ringing: Boolean(overlay.ringing) && c.status === 'waiting'
       };
     });
+
+    // Doctors see only their own calls (plus unassigned on-call requests);
+    // assistants and admins see everything.
+    if (req.user?.role === 'DOCTOR') {
+      enriched = enriched.filter((c) => !c.doctor_id || c.doctor_id === req.user.id);
+    }
 
     return res.json(enriched);
   } catch (error) {

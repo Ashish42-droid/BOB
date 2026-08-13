@@ -7,6 +7,38 @@ const asUuid = (v) => (typeof v === 'string' && UUID_RE.test(v) ? v : null);
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
 /**
+ * GET /api/doctor/directory — all active doctors with their specialities.
+ * Used by the clinic assistant portal to pick which doctor receives a case
+ * or a scheduled video consultation.
+ */
+export const listDoctors = async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('doctor_profiles')
+      .select('staff_id, registration_number, specialization, qualification, staff_profiles!inner(id, full_name, email, phone, status)')
+      .eq('staff_profiles.status', 'active')
+      .order('specialization', { ascending: true });
+
+    if (error) {
+      console.warn('Doctor directory fetch error:', error.message);
+      return res.status(500).json({ error: 'Failed to load the doctor directory', details: error.message });
+    }
+
+    return res.json((data || []).map((d) => ({
+      id: d.staff_id,
+      name: d.staff_profiles?.full_name || 'Doctor',
+      email: d.staff_profiles?.email || '',
+      phone: d.staff_profiles?.phone || '',
+      specialization: d.specialization || 'General Medicine',
+      qualification: d.qualification || '',
+      registration_number: d.registration_number || ''
+    })));
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to load the doctor directory', details: error.message });
+  }
+};
+
+/**
  * GET /api/doctor/queue — triage queue sorted HIGH -> MEDIUM -> LOW, newest first.
  */
 export const getDoctorQueue = async (req, res) => {

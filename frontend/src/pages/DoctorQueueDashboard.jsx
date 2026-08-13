@@ -203,6 +203,9 @@ export default function DoctorQueueDashboard() {
 
                       <div className="font-bold text-sm text-slate-900">{c.patient_name}</div>
                       {c.patient_code && <div className="text-xs text-slate-500">Code: <strong className="text-blue-600">{c.patient_code}</strong></div>}
+                      <div className={`text-[10px] font-bold mt-1 inline-block px-1.5 py-0.5 rounded ${c.doctor_id ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                        {c.doctor_id ? 'ASSIGNED TO YOU' : 'OPEN ON-CALL REQUEST'}
+                      </div>
                       <div className="text-xs text-slate-700 mt-1 font-medium">{c.reason || 'Teleconsultation'}</div>
                       <div className="text-xs text-amber-700 flex items-center gap-1 mt-1 font-medium">
                         <Clock className="w-3.5 h-3.5" /> {schedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ({schedDate.toLocaleDateString()})

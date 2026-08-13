@@ -19,13 +19,8 @@ const extractScheduledTime = (reason) => {
   return idx >= 0 ? reason.slice(idx + SCHEDULE_TAG.length).trim() : null;
 };
 
-async function getDefaultDoctor() {
-  const { data } = await supabaseAdmin
-    .from('doctor_profiles')
-    .select('staff_id, specialization, qualification, staff_profiles(full_name, email)')
-    .limit(1)
-    .maybeSingle();
-  return data
+const doctorRowToInfo = (data) =>
+  data
     ? {
         id: data.staff_id,
         name: data.staff_profiles?.full_name || 'Doctor',
@@ -33,21 +28,52 @@ async function getDefaultDoctor() {
         qualification: data.qualification
       }
     : null;
+
+async function getDoctorById(doctorId) {
+  if (!asUuid(doctorId)) return null;
+  const { data } = await supabaseAdmin
+    .from('doctor_profiles')
+    .select('staff_id, specialization, qualification, staff_profiles(full_name, email)')
+    .eq('staff_id', doctorId)
+    .maybeSingle();
+  return doctorRowToInfo(data);
 }
 
+async function getDefaultDoctor() {
+  const { data } = await supabaseAdmin
+    .from('doctor_profiles')
+    .select('staff_id, specialization, qualification, staff_profiles(full_name, email)')
+    .limit(1)
+    .maybeSingle();
+  return doctorRowToInfo(data);
+}
+
+/**
+ * GET /api/calls/availability — working hours for every active doctor, so the
+ * assistant can compare doctors before picking a slot.
+ */
 export const getDoctorAvailability = async (req, res) => {
   try {
-    const doctor = await getDefaultDoctor();
-    const days = [1, 2, 3, 4, 5, 6].map((day_of_week) => ({
-      day_of_week,
-      doctor_id: doctor?.id || null,
-      doctor_name: doctor?.name || 'On-call Doctor',
-      specialization: doctor?.specialization || 'General Medicine',
+    const { data, error } = await supabaseAdmin
+      .from('doctor_profiles')
+      .select('staff_id, specialization, qualification, staff_profiles!inner(full_name, status)')
+      .eq('staff_profiles.status', 'active')
+      .order('specialization', { ascending: true });
+
+    if (error) {
+      return res.status(500).json({ error: 'Failed to load doctor availability', details: error.message });
+    }
+
+    return res.json((data || []).map((d) => ({
+      doctor_id: d.staff_id,
+      doctor_name: d.staff_profiles?.full_name || 'Doctor',
+      specialization: d.specialization || 'General Medicine',
+      qualification: d.qualification || '',
+      working_days: 'Monday - Saturday',
       start_time: '08:00',
-      end_time: day_of_week === 6 ? '18:00' : '20:00',
+      end_time: '20:00',
       is_active: true
-    }));
-    return res.json(days);
+    })));
   } catch (error) {
     return res.status(500).json({ error: 'Failed to load doctor availability', details: error.message });
   }
@@ -88,13 +114,19 @@ export const scheduleCall = async (req, res) => {
       });
     }
 
-    const doctor = await getDefaultDoctor();
-    const doctorId = asUuid(doctor_id) || doctor?.id;
+    // Resolve the doctor selected by the assistant (falls back to first doctor
+    // only when no doctor_id was provided at all).
+    const doctor = (await getDoctorById(doctor_id)) || (await getDefaultDoctor());
+    if (asUuid(doctor_id) && (!doctor || doctor.id !== doctor_id)) {
+      return res.status(404).json({ error: 'The selected doctor was not found. Refresh the doctor list and pick again.' });
+    }
+    const doctorId = doctor?.id;
     if (!doctorId) {
       return res.status(503).json({ error: 'No doctor profile is registered yet. Run the setup script or register a doctor account first.' });
     }
 
-    // 15-minute slot collision check against existing scheduled appointments
+    // 15-minute slot collision check — scoped to THIS doctor only, so the
+    // assistant can book several doctors at the same time in parallel.
     const { data: existing } = await supabaseAdmin
       .from('appointments')
       .select('id, reason, status')
@@ -110,7 +142,7 @@ export const scheduleCall = async (req, res) => {
     });
     if (collision) {
       return res.status(409).json({
-        error: `The doctor already has a consultation within ${SLOT_MINUTES} minutes of that time. Choose a different slot.`
+        error: `${doctor.name} already has a consultation within ${SLOT_MINUTES} minutes of that time. Choose a different slot or a different doctor.`
       });
     }
 
@@ -158,7 +190,9 @@ export const scheduleCall = async (req, res) => {
       scheduled_time: targetDate.toISOString(),
       room_id: roomId,
       consultation_id: consultation?.id || null,
+      doctor_id: doctorId,
       doctor_name: doctor?.name,
+      doctor_specialization: doctor?.specialization,
       patient_name: patient_name || 'Patient'
     });
   } catch (error) {
@@ -170,7 +204,7 @@ export const listCalls = async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('appointments')
-      .select('*, patients(full_name, patient_code), consultations(id, status, meeting_room_id), doctor_profiles(staff_profiles(full_name))')
+      .select('*, patients(full_name, patient_code), consultations(id, status, meeting_room_id), doctor_profiles(specialization, staff_profiles(full_name))')
       .order('created_at', { ascending: false })
       .limit(50);
 
@@ -185,6 +219,7 @@ export const listCalls = async (req, res) => {
       patient_name: a.patients?.full_name || 'Patient',
       patient_code: a.patients?.patient_code || '',
       doctor_name: a.doctor_profiles?.staff_profiles?.full_name || 'Doctor',
+      doctor_specialization: a.doctor_profiles?.specialization || '',
       room_id: a.consultations?.[0]?.meeting_room_id || null
     })));
   } catch (error) {

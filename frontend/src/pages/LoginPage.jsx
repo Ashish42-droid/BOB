@@ -5,7 +5,12 @@ import { ArrowRight, Lock, Eye, EyeOff } from 'lucide-react';
 
 const DEMO_ACCOUNTS = [
   { label: 'Clinic Assistant', email: 'assistant@clinic.org', password: 'Assist@123' },
-  { label: 'Doctor', email: 'doctor@clinic.org', password: 'Doctor@123' },
+  { label: 'Doctor — General Medicine', email: 'doctor@clinic.org', password: 'Doctor@123' },
+  { label: 'Doctor — Pediatrics', email: 'dr.priya@clinic.org', password: 'Priya@1234' },
+  { label: 'Doctor — Cardiology', email: 'dr.arjun@clinic.org', password: 'Arjun@1234' },
+  { label: 'Doctor — Dermatology', email: 'dr.kavita@clinic.org', password: 'Kavita@1234' },
+  { label: 'Doctor — Orthopedics', email: 'dr.sanjay@clinic.org', password: 'Sanjay@1234' },
+  { label: 'Doctor — General Medicine', email: 'dr.meera@clinic.org', password: 'Meera@1234' },
   { label: 'Administrator', email: 'admin@clinic.org', password: 'Admin@123' }
 ];
 

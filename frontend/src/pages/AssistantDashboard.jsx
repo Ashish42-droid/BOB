@@ -5,6 +5,7 @@ import api from '../services/api';
 import RiskBadge from '../components/RiskBadge';
 import WebRTCVideoCallModal from '../components/WebRTCVideoCallModal';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../config/supabase';
 
 export default function AssistantDashboard() {
   const { user } = useAuth();
@@ -18,8 +19,20 @@ export default function AssistantDashboard() {
 
   useEffect(() => {
     fetchData();
+
+    // Realtime: refresh as soon as a consultation or appointment changes,
+    // with polling as the fallback transport.
+    const channel = supabase
+      .channel('assistant-dashboard-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'consultations' }, fetchData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, fetchData)
+      .subscribe();
+
     const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const fetchData = async () => {
@@ -146,6 +159,9 @@ export default function AssistantDashboard() {
 
                   <div className="font-bold text-sm text-slate-900">{c.patient_name}</div>
                   {c.patient_code && <div className="text-xs text-slate-500">Code: <strong className="text-blue-600">{c.patient_code}</strong></div>}
+                  <div className="text-xs text-emerald-700 font-semibold mt-1">
+                    {c.doctor_name}{c.doctor_specialization ? ` · ${c.doctor_specialization}` : ''}
+                  </div>
                   <div className="text-xs text-slate-700 mt-1 font-medium">{c.reason || 'Teleconsultation'}</div>
                   <div className="text-xs text-amber-700 flex items-center gap-1 mt-1 font-medium">
                     <Clock className="w-3.5 h-3.5" /> {new Date(c.scheduled_time || c.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
