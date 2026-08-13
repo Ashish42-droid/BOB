@@ -1,5 +1,8 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 
 import authRoutes from './routes/auth.routes.js';
 import patientRoutes from './routes/patient.routes.js';
@@ -20,8 +23,17 @@ app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Serve the built frontend (frontend/dist) when it exists — lets a single
+// Railway service host the whole app: UI + /api + /signal on one origin.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FRONTEND_DIST = path.resolve(__dirname, '../../frontend/dist');
+const HAS_FRONTEND = fs.existsSync(path.join(FRONTEND_DIST, 'index.html'));
+if (HAS_FRONTEND) {
+  app.use(express.static(FRONTEND_DIST));
+}
+
 // Root API Endpoint Welcome
-app.get(['/', '/api'], (req, res) => {
+app.get(HAS_FRONTEND ? '/api' : ['/', '/api'], (req, res) => {
   res.json({
     status: 'ONLINE',
     service: 'Virtual Village Clinic AI Backend API',
@@ -61,6 +73,13 @@ app.use('/api/doctor', doctorRoutes);
 app.use('/api/consultations', consultationRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/admin', adminRoutes);
+
+// SPA fallback: any non-API GET serves the frontend router
+if (HAS_FRONTEND) {
+  app.get(/^\/(?!api\/|signal).*/, (req, res) => {
+    res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
+  });
+}
 
 // Global Error Handler
 app.use((err, req, res, next) => {
